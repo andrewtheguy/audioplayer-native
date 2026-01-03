@@ -87,10 +87,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       isLiveStreamRef.current = isLiveStream;
     }, [isLiveStream]);
 
-    useEffect(() => {
-      onSessionStatusChange?.(session.sessionStatus);
-    }, [onSessionStatusChange, session.sessionStatus]);
-
     useImperativeHandle(ref, () => ({
       startSession: () => syncRef.current?.startSession(),
       takeOverSession: () => syncRef.current?.takeOverSession(),

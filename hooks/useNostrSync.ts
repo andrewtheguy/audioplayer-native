@@ -26,7 +26,11 @@ interface UseNostrSyncOptions {
 interface UseNostrSyncResult {
   status: "idle" | "loading" | "saving" | "synced" | "error";
   message: string | null;
-  performLoad: (secret: string, isTakeOver?: boolean, followRemote?: boolean) => void;
+  performLoad: (
+    secret: string,
+    isTakeOver?: boolean,
+    followRemote?: boolean
+  ) => (() => void) | undefined;
   performInitialLoad: (secret: string) => void;
   startSession: (secret: string) => void;
   performSave: (
@@ -117,10 +121,13 @@ export function useNostrSync({
         setMessage(`Saved ${historyToSave.length} entries`);
         dirtyRef.current = false;
       } catch (err) {
+        const error =
+          err instanceof Error ? err : new Error("Failed to save history");
         if (!options?.silent) {
           setStatus("error");
-          setMessage(err instanceof Error ? err.message : "Failed to save history");
+          setMessage(error.message);
         }
+        throw error;
       } finally {
         isLocalChangeRef.current = false;
         pendingPublishRef.current = false;
@@ -202,19 +209,39 @@ export function useNostrSync({
             updateSessionStateAndMaybeSave(result, isTakeOver);
 
             if (isTakeOver) {
-              sessionStatusRef.current = "active";
-              setSessionStatusRef.current("active");
-              setSessionNoticeRef.current(null);
-              void performSave(currentSecret, historyRef.current, { allowStale: true });
+              try {
+                await performSave(currentSecret, historyRef.current, { allowStale: true });
+                sessionStatusRef.current = "active";
+                setSessionStatusRef.current("active");
+                setSessionNoticeRef.current(null);
+              } catch (err) {
+                console.error("Failed to save history after takeover:", err);
+                setStatus("error");
+                setMessage(
+                  err instanceof Error ? err.message : "Failed to save history after takeover"
+                );
+                return;
+              }
             }
           } else {
             setStatus("synced");
             setMessage("No synced history found.");
             if (isTakeOver || sessionStatusRef.current === "active") {
-              sessionStatusRef.current = "active";
-              setSessionStatusRef.current("active");
-              setSessionNoticeRef.current(null);
-              void performSave(currentSecret, historyRef.current, { allowStale: true });
+              try {
+                await performSave(currentSecret, historyRef.current, { allowStale: true });
+                if (isTakeOver) {
+                  sessionStatusRef.current = "active";
+                  setSessionStatusRef.current("active");
+                  setSessionNoticeRef.current(null);
+                }
+              } catch (err) {
+                console.error("Failed to save history after takeover:", err);
+                setStatus("error");
+                setMessage(
+                  err instanceof Error ? err.message : "Failed to save history after takeover"
+                );
+                return;
+              }
             }
           }
         } catch (err) {
@@ -223,8 +250,8 @@ export function useNostrSync({
         }
       })();
 
-      return () => controller.abort();
-    },
+    return () => controller.abort();
+  },
     [mergeAndNotify, performSave, sessionId, updateSessionStateAndMaybeSave]
   );
 
@@ -326,7 +353,9 @@ export function useNostrSync({
     if (sessionStatus !== "active") return;
 
     const timer = setTimeout(() => {
-      void performSave(secret, historyRef.current, { silent: true });
+      void performSave(secret, historyRef.current, { silent: true }).catch((err) => {
+        console.error("Failed to save history in background:", err);
+      });
     }, debounceSaveMs);
 
     return () => clearTimeout(timer);

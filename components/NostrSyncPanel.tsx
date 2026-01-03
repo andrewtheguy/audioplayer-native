@@ -56,15 +56,17 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
   });
 
   const secretValid = isValidSecret(secret);
+  const isBusy = status === "loading" || status === "saving";
 
   useEffect(() => {
     if (!secret || !secretValid) return;
-    if (session.sessionStatus === "idle") {
+    if (session.sessionStatus === "idle" || session.sessionStatus === "unknown") {
       performInitialLoad(secret);
     }
   }, [secret, secretValid, session.sessionStatus, performInitialLoad]);
 
   const handleStartSession = () => {
+    if (isBusy) return;
     if (!secretValid) return;
     session.startTakeoverGrace();
     session.setSessionStatus("active");
@@ -72,6 +74,7 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
   };
 
   const handleTakeOver = () => {
+    if (isBusy) return;
     if (!secretValid) return;
     session.startTakeoverGrace();
     session.setSessionStatus("active");
@@ -79,13 +82,17 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
   };
 
   const handleRefresh = () => {
+    if (isBusy) return;
     if (!secretValid) return;
     performInitialLoad(secret);
   };
 
   const handleManualSave = () => {
+    if (isBusy) return;
     if (!secretValid) return;
-    void performSave(secret, history);
+    void performSave(secret, history).catch((err) => {
+      console.error("Failed to save history:", err);
+    });
   };
 
   useImperativeHandle(ref, () => ({
@@ -111,19 +118,31 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
 
       <View style={styles.row}>
         {session.sessionStatus === "idle" || session.sessionStatus === "unknown" ? (
-          <Pressable style={styles.button} onPress={handleStartSession}>
+          <Pressable
+            style={[styles.button, isBusy && styles.buttonDisabled]}
+            onPress={handleStartSession}
+            disabled={isBusy}
+          >
             <Text style={styles.buttonText}>Start Session</Text>
           </Pressable>
         ) : null}
 
         {session.sessionStatus === "stale" ? (
-          <Pressable style={styles.button} onPress={handleTakeOver}>
+          <Pressable
+            style={[styles.button, isBusy && styles.buttonDisabled]}
+            onPress={handleTakeOver}
+            disabled={isBusy}
+          >
             <Text style={styles.buttonText}>Take Over</Text>
           </Pressable>
         ) : null}
 
         {session.sessionStatus === "active" ? (
-          <Pressable style={styles.button} onPress={handleManualSave}>
+          <Pressable
+            style={[styles.button, isBusy && styles.buttonDisabled]}
+            onPress={handleManualSave}
+            disabled={isBusy}
+          >
             <Text style={styles.buttonText}>Sync Now</Text>
           </Pressable>
         ) : null}
@@ -157,6 +176,9 @@ const styles = StyleSheet.create({
   message: {
     color: "#93C5FD",
     marginTop: 6,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   row: {
     flexDirection: "row",

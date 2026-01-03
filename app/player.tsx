@@ -17,16 +17,23 @@ export default function PlayerScreen() {
   const router = useRouter();
   const [secret, setSecret] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
   const playerRef = useRef<AudioPlayerHandle | null>(null);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>("unknown");
 
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const stored = await getSavedSessionSecret();
-      if (!mounted) return;
-      setSecret(stored || null);
-      setLoading(false);
+      let stored: string | null = null;
+      try {
+        stored = await getSavedSessionSecret();
+      } catch (error) {
+        console.error("Failed to load session secret.", error);
+      } finally {
+        if (!mounted) return;
+        setSecret(stored || null);
+        setLoading(false);
+      }
     })();
     return () => {
       mounted = false;
@@ -34,8 +41,15 @@ export default function PlayerScreen() {
   }, []);
 
   const handleLogout = async () => {
-    await clearSessionSecret();
-    router.replace("/login");
+    setLogoutError(null);
+    try {
+      await clearSessionSecret();
+      router.replace("/login");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Failed to clear session secret.", error);
+      setLogoutError(message || "Failed to clear session secret.");
+    }
   };
 
 
@@ -84,6 +98,19 @@ export default function PlayerScreen() {
         </View>
       </View>
       <ScrollView contentContainerStyle={styles.content}>
+        {logoutError ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{logoutError}</Text>
+            <View style={styles.errorActions}>
+              <Pressable style={styles.errorButton} onPress={() => void handleLogout()}>
+                <Text style={styles.errorButtonText}>Try again</Text>
+              </Pressable>
+              <Pressable style={styles.errorButtonAlt} onPress={() => router.replace("/login")}>
+                <Text style={styles.errorButtonAltText}>Continue anyway</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
         <AudioPlayer
           ref={playerRef}
           secret={secret}
@@ -120,6 +147,44 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingBottom: 24,
+  },
+  errorBanner: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: "#1F2937",
+  },
+  errorText: {
+    color: "#FCA5A5",
+    marginBottom: 8,
+  },
+  errorActions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  errorButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: "#2563EB",
+  },
+  errorButtonText: {
+    color: "#F9FAFB",
+    fontWeight: "600",
+  },
+  errorButtonAlt: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: "#0B1120",
+    borderWidth: 1,
+    borderColor: "#374151",
+  },
+  errorButtonAltText: {
+    color: "#E5E7EB",
+    fontWeight: "600",
   },
   headerTitle: {
     color: "#F9FAFB",

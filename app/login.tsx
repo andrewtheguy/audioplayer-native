@@ -18,14 +18,26 @@ export default function LoginScreen() {
       setError("Invalid secret. Check for typos.");
       return;
     }
-    await saveSessionSecret(secret);
-    router.replace("/player");
+    try {
+      await saveSessionSecret(secret);
+      router.replace("/player");
+    } catch (err) {
+      console.error("Failed to save session secret.", err);
+      setError("Unable to save the secret. Please try again.");
+    }
   };
 
   const handleGenerate = () => {
-    const next = generateSecret();
-    setSecret(next);
-    setError(null);
+    try {
+      const next = generateSecret();
+      setSecret(next);
+      setError(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("Failed to generate secret.", err);
+      setSecret("");
+      setError(message || "Unable to generate a new secret.");
+    }
   };
 
   return (

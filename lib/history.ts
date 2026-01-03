@@ -23,12 +23,34 @@ export interface HistoryPayload {
 function isValidHistoryEntry(value: unknown): value is HistoryEntry {
   if (typeof value !== "object" || value === null) return false;
   const entry = value as Record<string, unknown>;
+  const isValidIsoDateString = (dateValue: string): boolean => {
+    if (
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})$/.test(
+        dateValue
+      )
+    ) {
+      return false;
+    }
+    return Number.isFinite(Date.parse(dateValue));
+  };
+  const hasValidPosition =
+    typeof entry.position === "number" &&
+    Number.isFinite(entry.position) &&
+    entry.position >= 0;
+  const hasValidLastPlayedAt =
+    typeof entry.lastPlayedAt === "string" && isValidIsoDateString(entry.lastPlayedAt);
+  const hasValidGain =
+    entry.gain === undefined ||
+    (typeof entry.gain === "number" &&
+      Number.isFinite(entry.gain) &&
+      entry.gain >= 0 &&
+      entry.gain <= 1);
   return (
     typeof entry.url === "string" &&
     (entry.title === undefined || typeof entry.title === "string") &&
-    typeof entry.lastPlayedAt === "string" &&
-    typeof entry.position === "number" &&
-    (entry.gain === undefined || typeof entry.gain === "number")
+    hasValidLastPlayedAt &&
+    hasValidPosition &&
+    hasValidGain
   );
 }
 
@@ -66,13 +88,15 @@ export async function getHistory(): Promise<HistoryEntry[]> {
   }
 }
 
-export async function saveHistory(history: HistoryEntry[]): Promise<void> {
+export async function saveHistory(history: HistoryEntry[]): Promise<boolean> {
   try {
     const trimmed = trimHistory(history);
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
     await AsyncStorage.setItem(HISTORY_TIMESTAMP_KEY, Date.now().toString());
+    return true;
   } catch (err) {
     console.warn("Failed to save history to AsyncStorage:", err);
+    return false;
   }
 }
 
