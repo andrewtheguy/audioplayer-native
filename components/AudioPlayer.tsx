@@ -53,6 +53,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   const soundRef = useRef<Audio.Sound | null>(null);
   const currentUrlRef = useRef<string | null>(null);
   const currentTitleRef = useRef<string | null>(null);
+  const currentTimeRef = useRef(0);
+  const lastAutoSaveAtRef = useRef(0);
 
   const pendingSeekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSeekAttemptsRef = useRef(0);
@@ -191,7 +193,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     }
 
     setIsPlaying(status.isPlaying);
-    setCurrentTime(status.positionMillis / 1000);
+    const nextTime = status.positionMillis / 1000;
+    currentTimeRef.current = nextTime;
+    setCurrentTime(nextTime);
 
     if (typeof status.durationMillis === "number") {
       setDuration(status.durationMillis / 1000);
@@ -203,6 +207,15 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     if (pendingSeekPositionRef.current !== null) {
       applyPendingSeek();
+    }
+
+    if (
+      status.isPlaying &&
+      !isLiveStreamRef.current &&
+      Date.now() - lastAutoSaveAtRef.current >= 5000
+    ) {
+      lastAutoSaveAtRef.current = Date.now();
+      saveHistoryEntry(nextTime);
     }
   };
 
@@ -356,12 +369,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   };
 
   useEffect(() => {
-    if (!isPlaying || isLiveStream) return;
-    const timer = setInterval(() => {
-      saveHistoryEntry(currentTime);
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [isPlaying, isLiveStream, currentTime, saveHistoryEntry]);
+    if (!isPlaying) {
+      lastAutoSaveAtRef.current = 0;
+    }
+  }, [isPlaying]);
 
   const handleRemoteSync = (remoteHistory: HistoryEntry[]) => {
     const entry = remoteHistory[0];
