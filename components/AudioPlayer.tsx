@@ -5,6 +5,7 @@ import type { HistoryEntry } from "@/lib/history";
 import { getHistory, saveHistory } from "@/lib/history";
 import { Audio } from "expo-av";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import {
   ActivityIndicator,
   Alert,
@@ -30,10 +31,17 @@ interface AudioPlayerProps {
 }
 
 function formatTime(seconds: number | null): string {
-  if (seconds === null || !Number.isFinite(seconds)) return "--:--";
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs.toString().padStart(2, "0")}`;
+  if (seconds === null || !Number.isFinite(seconds)) return "--:--:--";
+  const total = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(total / 3600);
+  const mins = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  return `${hours.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")}:${secs
+    .toString()
+    .padStart(2, "0")}`;
+}
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
@@ -47,8 +55,13 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState<number | null>(null);
   const [isLiveStream, setIsLiveStream] = useState(false);
+  const [volume, setVolume] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [seekBarWidth, setSeekBarWidth] = useState(0);
+  const [volumeBarWidth, setVolumeBarWidth] = useState(0);
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  const [scrubTime, setScrubTime] = useState(0);
 
   const soundRef = useRef<Audio.Sound | null>(null);
   const currentUrlRef = useRef<string | null>(null);
@@ -81,6 +94,35 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     getSessionStatus: () => session.sessionStatus,
   }));
 
+  const seekTo = useCallback(
+    async (targetSeconds: number) => {
+      if (!soundRef.current) return;
+      if (!Number.isFinite(targetSeconds)) return;
+      const next = Math.max(0, targetSeconds);
+      try {
+        await soundRef.current.setPositionAsync(next * 1000);
+        currentTimeRef.current = next;
+        setCurrentTime(next);
+      } catch {
+        // Ignore seek failures (e.g., unloaded sound).
+      }
+    },
+    []
+  );
+
+  const applyVolume = useCallback(
+    async (nextVolume: number) => {
+      const clamped = clamp(nextVolume, 0, 1);
+      setVolume(clamped);
+      if (!soundRef.current) return;
+      try {
+        await soundRef.current.setVolumeAsync(clamped);
+      } catch {
+        // Ignore volume failures while loading/unloading.
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     return () => {
@@ -196,7 +238,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
         const { sound, status } = await Audio.Sound.createAsync(
           { uri: urlToLoad },
-          { shouldPlay: false },
+          { shouldPlay: false, volume },
           onPlaybackStatusUpdate
         );
 
@@ -237,7 +279,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         setLoading(false);
       }
     },
-    [saveHistoryEntry]
+    [saveHistoryEntry, volume]
   );
 
   const applyHistoryDisplay = useCallback((entry: HistoryEntry) => {
@@ -479,10 +521,71 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         <Text style={styles.nowPlayingTitle}>
           {nowPlayingTitle ?? nowPlayingUrl ?? "Nothing loaded"}
         </Text>
-        <Text style={styles.meta}>
-          {formatTime(currentTime)} / {formatTime(duration)} {isLiveStream ? "(Live)" : ""}
-        </Text>
-        <View style={styles.row}>
+        <View style={styles.seekRow}>
+          <Text style={styles.meta}>
+            {formatTime(isScrubbing ? scrubTime : currentTime)}
+          </Text>
+          <Text style={styles.meta}>{isLiveStream ? "Live" : formatTime(duration)}</Text>
+        </View>
+        <View
+          style={[
+            styles.seekBar,
+            (isViewOnly || isLiveStream || !duration) && styles.seekBarDisabled,
+          ]}
+          onLayout={(event) => setSeekBarWidth(event.nativeEvent.layout.width)}
+          onStartShouldSetResponder={() => !isViewOnly && !isLiveStream && !!duration}
+          onResponderGrant={(event) => {
+            if (isViewOnly || isLiveStream || !duration || seekBarWidth === 0) return;
+            const ratio = clamp(event.nativeEvent.locationX / seekBarWidth, 0, 1);
+            const target = ratio * duration;
+            setIsScrubbing(true);
+            setScrubTime(target);
+          }}
+          onResponderMove={(event) => {
+            if (!isScrubbing || isViewOnly || isLiveStream || !duration || seekBarWidth === 0)
+              return;
+            const ratio = clamp(event.nativeEvent.locationX / seekBarWidth, 0, 1);
+            setScrubTime(ratio * duration);
+          }}
+          onResponderRelease={() => {
+            if (!isScrubbing || isViewOnly || isLiveStream || !duration) {
+              setIsScrubbing(false);
+              return;
+            }
+            setIsScrubbing(false);
+            void seekTo(scrubTime);
+          }}
+          onResponderTerminate={() => {
+            setIsScrubbing(false);
+          }}
+        >
+          <View style={styles.seekTrack} />
+          <View
+            style={[
+              styles.seekProgress,
+              {
+                width: `${clamp(
+                  duration ? (isScrubbing ? scrubTime : currentTime) / duration : 0,
+                  0,
+                  1
+                ) * 100}%`,
+              },
+            ]}
+          />
+          <View
+            style={[
+              styles.seekThumb,
+              {
+                left: `${clamp(
+                  duration ? (isScrubbing ? scrubTime : currentTime) / duration : 0,
+                  0,
+                  1
+                ) * 100}%`,
+              },
+            ]}
+          />
+        </View>
+        <View style={[styles.row, styles.rowCentered]}>
           <Pressable
             style={[styles.secondaryButton, isViewOnly && styles.buttonDisabled]}
             onPress={() => void seekBy(-15)}
@@ -495,15 +598,42 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             onPress={togglePlayPause}
             disabled={isViewOnly}
           >
-            <Text style={styles.primaryButtonText}>{isPlaying ? "Pause" : "Play"}</Text>
+            <MaterialIcons
+              name={isPlaying ? "pause" : "play-arrow"}
+              size={26}
+              color="#F9FAFB"
+            />
           </Pressable>
           <Pressable
             style={[styles.secondaryButton, isViewOnly && styles.buttonDisabled]}
-            onPress={() => void seekBy(15)}
+            onPress={() => void seekBy(30)}
             disabled={isViewOnly}
           >
-            <Text style={styles.secondaryButtonText}>+15s</Text>
+            <Text style={styles.secondaryButtonText}>+30s</Text>
           </Pressable>
+        </View>
+        <View style={styles.volumeRow}>
+          <Text style={styles.meta}>Volume</Text>
+          <Text style={styles.meta}>{Math.round(volume * 100)}%</Text>
+        </View>
+        <View
+          style={[styles.volumeBar, isViewOnly && styles.seekBarDisabled]}
+          onLayout={(event) => setVolumeBarWidth(event.nativeEvent.layout.width)}
+          onStartShouldSetResponder={() => !isViewOnly}
+          onResponderGrant={(event) => {
+            if (isViewOnly || volumeBarWidth === 0) return;
+            const ratio = clamp(event.nativeEvent.locationX / volumeBarWidth, 0, 1);
+            void applyVolume(ratio);
+          }}
+          onResponderMove={(event) => {
+            if (isViewOnly || volumeBarWidth === 0) return;
+            const ratio = clamp(event.nativeEvent.locationX / volumeBarWidth, 0, 1);
+            void applyVolume(ratio);
+          }}
+        >
+          <View style={styles.seekTrack} />
+          <View style={[styles.seekProgress, { width: `${volume * 100}%` }]} />
+          <View style={[styles.seekThumb, { left: `${volume * 100}%` }]} />
         </View>
       </View>
 
@@ -582,7 +712,9 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     backgroundColor: "#2563EB",
-    paddingVertical: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    minWidth: 110,
     borderRadius: 8,
     alignItems: "center",
     marginTop: 4,
@@ -590,6 +722,7 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     color: "#F9FAFB",
     fontWeight: "600",
+    fontSize: 16,
   },
   secondaryButton: {
     backgroundColor: "#374151",
@@ -606,11 +739,60 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 12,
   },
+  rowCentered: {
+    justifyContent: "center",
+  },
   rowBetween: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 8,
+  },
+  seekRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 8,
+  },
+  seekBar: {
+    height: 18,
+    marginTop: 8,
+    justifyContent: "center",
+  },
+  seekTrack: {
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: "#374151",
+  },
+  seekProgress: {
+    position: "absolute",
+    top: 7,
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: "#60A5FA",
+  },
+  seekThumb: {
+    position: "absolute",
+    top: 2,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: "#93C5FD",
+    transform: [{ translateX: -7 }],
+  },
+  seekBarDisabled: {
+    opacity: 0.5,
+  },
+  volumeRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 16,
+  },
+  volumeBar: {
+    height: 18,
+    marginTop: 8,
+    justifyContent: "center",
   },
   nowPlaying: {
     color: "#F9FAFB",
