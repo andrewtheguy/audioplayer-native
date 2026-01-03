@@ -179,6 +179,7 @@ export function useNostrSync({
             }
 
             if (
+              !isTakeOver &&
               sessionStatusRef.current === "active" &&
               remoteSid &&
               remoteSid !== sessionId
@@ -195,6 +196,9 @@ export function useNostrSync({
             updateSessionStateAndMaybeSave(result, isTakeOver);
 
             if (isTakeOver) {
+              sessionStatusRef.current = "active";
+              setSessionStatusRef.current("active");
+              setSessionNoticeRef.current(null);
               void performSave(currentSecret, historyRef.current, { allowStale: true });
             }
           } else {

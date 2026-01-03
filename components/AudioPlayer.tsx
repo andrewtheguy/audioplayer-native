@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Audio } from "expo-av";
 import {
   ActivityIndicator,
@@ -12,11 +12,21 @@ import {
 } from "react-native";
 import type { HistoryEntry } from "@/lib/history";
 import { getHistory, saveHistory } from "@/lib/history";
-import { NostrSyncPanel } from "@/components/NostrSyncPanel";
+import { NostrSyncPanel, type NostrSyncPanelHandle } from "@/components/NostrSyncPanel";
+import type { SessionStatus } from "@/hooks/useNostrSession";
 import { useNostrSession } from "@/hooks/useNostrSession";
+
+export interface AudioPlayerHandle {
+  startSession: () => void;
+  takeOverSession: () => void;
+  refreshSession: () => void;
+  syncNow: () => void;
+  getSessionStatus: () => SessionStatus;
+}
 
 interface AudioPlayerProps {
   secret: string;
+  onSessionStatusChange?: (status: SessionStatus) => void;
 }
 
 function formatTime(seconds: number | null): string {
@@ -26,7 +36,8 @@ function formatTime(seconds: number | null): string {
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
-export function AudioPlayer({ secret }: AudioPlayerProps) {
+export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
+  ({ secret, onSessionStatusChange }, ref) => {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
@@ -49,12 +60,28 @@ export function AudioPlayer({ secret }: AudioPlayerProps) {
   const seekingToTargetRef = useRef(false);
   const isLiveStreamRef = useRef(false);
 
-  const session = useNostrSession({ secret });
+  const session = useNostrSession({
+    secret,
+    onSessionStatusChange,
+  });
   const isViewOnly = session.sessionStatus !== "active";
+  const syncRef = useRef<NostrSyncPanelHandle | null>(null);
 
   useEffect(() => {
     isLiveStreamRef.current = isLiveStream;
   }, [isLiveStream]);
+
+  useEffect(() => {
+    onSessionStatusChange?.(session.sessionStatus);
+  }, [onSessionStatusChange, session.sessionStatus]);
+
+  useImperativeHandle(ref, () => ({
+    startSession: () => syncRef.current?.startSession(),
+    takeOverSession: () => syncRef.current?.takeOverSession(),
+    refreshSession: () => syncRef.current?.refreshSession(),
+    syncNow: () => syncRef.current?.syncNow(),
+    getSessionStatus: () => session.sessionStatus,
+  }));
 
   useEffect(() => {
     let mounted = true;
@@ -453,6 +480,7 @@ export function AudioPlayer({ secret }: AudioPlayerProps) {
       </View>
 
       <NostrSyncPanel
+        ref={syncRef}
         secret={secret}
         history={history}
         session={session}
@@ -465,7 +493,8 @@ export function AudioPlayer({ secret }: AudioPlayerProps) {
       />
     </View>
   );
-}
+  }
+);
 
 const styles = StyleSheet.create({
   container: {

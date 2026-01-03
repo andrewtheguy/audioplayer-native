@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { forwardRef, useEffect, useImperativeHandle } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { isValidSecret } from "@/lib/nostr-crypto";
 import type { HistoryEntry } from "@/lib/history";
@@ -17,6 +17,13 @@ interface NostrSessionApi {
   startTakeoverGrace: () => void;
 }
 
+export interface NostrSyncPanelHandle {
+  startSession: () => void;
+  takeOverSession: () => void;
+  refreshSession: () => void;
+  syncNow: () => void;
+}
+
 interface NostrSyncPanelProps {
   secret: string;
   history: HistoryEntry[];
@@ -26,14 +33,8 @@ interface NostrSyncPanelProps {
   onRemoteSync?: (remoteHistory: HistoryEntry[]) => void;
 }
 
-export function NostrSyncPanel({
-  secret,
-  history,
-  session,
-  onHistoryLoaded,
-  onTakeOver,
-  onRemoteSync,
-}: NostrSyncPanelProps) {
+export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelProps>(
+  ({ secret, history, session, onHistoryLoaded, onTakeOver, onRemoteSync }, ref) => {
   const {
     status,
     message,
@@ -87,6 +88,13 @@ export function NostrSyncPanel({
     void performSave(secret, history);
   };
 
+  useImperativeHandle(ref, () => ({
+    startSession: handleStartSession,
+    takeOverSession: handleTakeOver,
+    refreshSession: handleRefresh,
+    syncNow: handleManualSave,
+  }));
+
   return (
     <View style={styles.card}>
       <Text style={styles.title}>Nostr Sync</Text>
@@ -114,12 +122,6 @@ export function NostrSyncPanel({
           </Pressable>
         ) : null}
 
-        {(session.sessionStatus === "idle" || session.sessionStatus === "stale") ? (
-          <Pressable style={styles.button} onPress={handleRefresh}>
-            <Text style={styles.buttonText}>Refresh</Text>
-          </Pressable>
-        ) : null}
-
         {session.sessionStatus === "active" ? (
           <Pressable style={styles.button} onPress={handleManualSave}>
             <Text style={styles.buttonText}>Sync Now</Text>
@@ -130,7 +132,7 @@ export function NostrSyncPanel({
       <Text style={styles.meta}>Status: {status}</Text>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   card: {
