@@ -66,6 +66,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   });
   const isViewOnly = session.sessionStatus !== "active";
   const syncRef = useRef<NostrSyncPanelHandle | null>(null);
+  const lastSessionStatusRef = useRef<SessionStatus>(session.sessionStatus);
 
   useEffect(() => {
     isLiveStreamRef.current = isLiveStream;
@@ -83,21 +84,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     getSessionStatus: () => session.sessionStatus,
   }));
 
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const stored = await getHistory();
-      if (!mounted) return;
-      setHistory(stored);
-      if (stored[0]) {
-        loadFromHistory(stored[0]);
-      }
-    })();
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
 
   useEffect(() => {
     return () => {
@@ -221,7 +207,11 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   };
 
   const loadUrl = useCallback(
-    async (urlToLoad: string, resolvedTitle?: string, options?: { forceReset?: boolean }) => {
+    async (
+      urlToLoad: string,
+      resolvedTitle?: string,
+      options?: { forceReset?: boolean; skipInitialSave?: boolean }
+    ) => {
       if (!urlToLoad) return;
       setLoading(true);
       setError(null);
@@ -253,7 +243,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           setIsLiveStream(true);
         }
 
-        saveHistoryEntry(0, { allowLive: true });
+        if (!options?.skipInitialSave) {
+          saveHistoryEntry(0, { allowLive: true });
+        }
 
         if (options?.forceReset) {
           pendingSeekPositionRef.current = null;
@@ -268,10 +260,24 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     [saveHistoryEntry]
   );
 
+  const applyHistoryDisplay = useCallback((entry: HistoryEntry) => {
+    currentUrlRef.current = entry.url;
+    currentTitleRef.current = entry.title ?? null;
+    setNowPlayingUrl(entry.url);
+    setNowPlayingTitle(entry.title ?? null);
+    setCurrentTime(Number.isFinite(entry.position) ? entry.position : 0);
+  }, []);
+
   const loadFromHistory = useCallback(
-    (entry: HistoryEntry, options?: { forceReset?: boolean }) => {
-      if (isViewOnly) return;
+    (entry: HistoryEntry, options?: { forceReset?: boolean; allowViewOnly?: boolean }) => {
       if (!entry) return;
+      if (isViewOnly && !options?.allowViewOnly) return;
+
+      if (isViewOnly) {
+        applyHistoryDisplay(entry);
+        return;
+      }
+
       pendingSeekPositionRef.current = entry.position;
       pendingSeekAttemptsRef.current = 0;
       seekingToTargetRef.current = false;
@@ -279,10 +285,29 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         clearTimeout(pendingSeekTimerRef.current);
         pendingSeekTimerRef.current = null;
       }
-      void loadUrl(entry.url, entry.title, options);
+      void loadUrl(entry.url, entry.title, {
+        forceReset: options?.forceReset,
+        skipInitialSave: true,
+      });
     },
-    [isViewOnly, loadUrl]
+    [applyHistoryDisplay, isViewOnly, loadUrl]
   );
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const stored = await getHistory();
+      if (!mounted) return;
+      setHistory(stored);
+      if (stored[0]) {
+        applyHistoryDisplay(stored[0]);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [applyHistoryDisplay]);
 
   const loadStream = () => {
     if (isViewOnly) return;
@@ -343,11 +368,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     if (!entry) return;
 
     if (isViewOnly) {
-      currentUrlRef.current = entry.url;
-      currentTitleRef.current = entry.title ?? null;
-      setNowPlayingUrl(entry.url);
-      setNowPlayingTitle(entry.title ?? null);
-      setCurrentTime(Number.isFinite(entry.position) ? entry.position : 0);
+      applyHistoryDisplay(entry);
       return;
     }
 
@@ -366,6 +387,28 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     loadFromHistory(entry, { forceReset: true });
   };
+
+  useEffect(() => {
+    const prev = lastSessionStatusRef.current;
+    lastSessionStatusRef.current = session.sessionStatus;
+    if (prev !== "active" && session.sessionStatus === "active") {
+      const entry = history[0];
+      if (entry) {
+        pendingSeekPositionRef.current = entry.position;
+        pendingSeekAttemptsRef.current = 0;
+        seekingToTargetRef.current = false;
+        void loadUrl(entry.url, entry.title, { forceReset: true, skipInitialSave: true });
+      } else if (currentUrlRef.current) {
+        pendingSeekPositionRef.current = currentTime;
+        pendingSeekAttemptsRef.current = 0;
+        seekingToTargetRef.current = false;
+        void loadUrl(currentUrlRef.current, currentTitleRef.current ?? undefined, {
+          forceReset: true,
+          skipInitialSave: true,
+        });
+      }
+    }
+  }, [currentTime, history, loadUrl, session.sessionStatus]);
 
   const handleClearHistory = () => {
     if (isViewOnly) return;
