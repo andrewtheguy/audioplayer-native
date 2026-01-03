@@ -1,5 +1,10 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { NostrSyncPanel, type NostrSyncPanelHandle } from "@/components/NostrSyncPanel";
+import type { SessionStatus } from "@/hooks/useNostrSession";
+import { useNostrSession } from "@/hooks/useNostrSession";
+import type { HistoryEntry } from "@/lib/history";
+import { getHistory, saveHistory } from "@/lib/history";
 import { Audio } from "expo-av";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -10,11 +15,6 @@ import {
   TextInput,
   View,
 } from "react-native";
-import type { HistoryEntry } from "@/lib/history";
-import { getHistory, saveHistory } from "@/lib/history";
-import { NostrSyncPanel, type NostrSyncPanelHandle } from "@/components/NostrSyncPanel";
-import type { SessionStatus } from "@/hooks/useNostrSession";
-import { useNostrSession } from "@/hooks/useNostrSession";
 
 export interface AudioPlayerHandle {
   startSession: () => void;
@@ -311,9 +311,32 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         if (status.isLoaded && typeof status.durationMillis === "number") {
           setDuration(status.durationMillis / 1000);
           setIsLiveStream(false);
+          isLiveStreamRef.current = false;
         } else {
           setDuration(null);
           setIsLiveStream(true);
+          isLiveStreamRef.current = true;
+        }
+
+        const initialPosition = pendingSeekPositionRef.current ?? expectedPositionRef.current;
+        if (
+          !isLiveStreamRef.current &&
+          initialPosition !== null &&
+          Number.isFinite(initialPosition)
+        ) {
+          try {
+            await sound.setPositionAsync(Math.max(0, initialPosition * 1000));
+            currentTimeRef.current = initialPosition;
+            setCurrentTime(initialPosition);
+            pendingSeekPositionRef.current = null;
+            pendingSeekAttemptsRef.current = 0;
+            seekingToTargetRef.current = false;
+          } catch (err) {
+            pendingSeekPositionRef.current = initialPosition;
+            pendingSeekAttemptsRef.current = 0;
+            seekingToTargetRef.current = false;
+            schedulePendingSeekRetry();
+          }
         }
 
         if (!options?.skipInitialSave) {
