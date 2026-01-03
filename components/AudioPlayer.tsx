@@ -4,7 +4,7 @@ import { useNostrSession } from "@/hooks/useNostrSession";
 import type { HistoryEntry } from "@/lib/history";
 import { getHistory, saveHistory } from "@/lib/history";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { Audio, InterruptionModeIOS } from "expo-av";
+import { Audio, InterruptionModeIOS, type AVPlaybackStatus } from "expo-av";
 import { Command, MediaControl, PlaybackState } from "expo-media-control";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
@@ -271,7 +271,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     [currentTime, isViewOnly]
   );
 
-  const onPlaybackStatusUpdate = (status: Audio.AVPlaybackStatus) => {
+  const onPlaybackStatusUpdate = (status: AVPlaybackStatus) => {
     if (!status.isLoaded) {
       if (status.error) {
         setError(status.error);
