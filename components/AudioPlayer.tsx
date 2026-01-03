@@ -56,6 +56,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const [volume, setVolume] = useState(1);
+    const [showUrlInput, setShowUrlInput] = useState(false);
 
     // Scrubbing state - when true, we show scrub position instead of actual position
     const [isScrubbing, setIsScrubbing] = useState(false);
@@ -438,41 +439,75 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       );
     }
 
+    const handleLoadStream = () => {
+      loadStream();
+      setShowUrlInput(false);
+      setUrl("");
+      setTitle("");
+    };
+
+    const handleCancelUrlInput = () => {
+      setShowUrlInput(false);
+      setUrl("");
+      setTitle("");
+      setError(null);
+    };
+
     return (
       <View style={styles.container}>
         <Text style={styles.heading}>Audio Player</Text>
 
-        <View style={styles.card}>
-          <Text style={styles.label}>Stream URL</Text>
-          <TextInput
-            style={styles.input}
-            value={url}
-            onChangeText={setUrl}
-            autoCapitalize="none"
-            autoCorrect={false}
-            placeholder="https://..."
-            placeholderTextColor="#6B7280"
-            editable={!isViewOnly}
-          />
-          <Text style={styles.label}>Title (optional)</Text>
-          <TextInput
-            style={styles.input}
-            value={title}
-            onChangeText={setTitle}
-            placeholder="My playlist"
-            placeholderTextColor="#6B7280"
-            editable={!isViewOnly}
-          />
+        {!showUrlInput ? (
           <Pressable
-            style={[styles.primaryButton, isViewOnly && styles.buttonDisabled]}
-            onPress={loadStream}
+            style={[styles.addUrlButton, isViewOnly && styles.buttonDisabled]}
+            onPress={() => setShowUrlInput(true)}
             disabled={isViewOnly}
           >
-            <Text style={styles.primaryButtonText}>Load</Text>
+            <MaterialIcons name="add" size={20} color="#F9FAFB" />
+            <Text style={styles.addUrlButtonText}>Add URL</Text>
           </Pressable>
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-          {loading ? <ActivityIndicator color="#60A5FA" /> : null}
-        </View>
+        ) : (
+          <View style={styles.card}>
+            <Text style={styles.label}>Stream URL</Text>
+            <TextInput
+              style={styles.input}
+              value={url}
+              onChangeText={setUrl}
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="https://..."
+              placeholderTextColor="#6B7280"
+              editable={!isViewOnly}
+              autoFocus
+            />
+            <Text style={styles.label}>Title (optional)</Text>
+            <TextInput
+              style={styles.input}
+              value={title}
+              onChangeText={setTitle}
+              placeholder="My playlist"
+              placeholderTextColor="#6B7280"
+              editable={!isViewOnly}
+            />
+            <View style={styles.buttonRow}>
+              <Pressable
+                style={[styles.primaryButton, styles.flexButton, isViewOnly && styles.buttonDisabled]}
+                onPress={handleLoadStream}
+                disabled={isViewOnly}
+              >
+                <Text style={styles.primaryButtonText}>Load</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.cancelButton, styles.flexButton]}
+                onPress={handleCancelUrlInput}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </Pressable>
+            </View>
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+            {loading ? <ActivityIndicator color="#60A5FA" /> : null}
+          </View>
+        )}
 
         <View style={styles.card}>
           <Text style={styles.nowPlaying}>Now Playing</Text>
@@ -706,6 +741,42 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.5,
+  },
+  addUrlButton: {
+    backgroundColor: "#374151",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  addUrlButtonText: {
+    color: "#F9FAFB",
+    fontWeight: "600",
+    fontSize: 16,
+  },
+  buttonRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+  },
+  flexButton: {
+    flex: 1,
+  },
+  cancelButton: {
+    backgroundColor: "#374151",
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  cancelButtonText: {
+    color: "#F9FAFB",
+    fontWeight: "600",
+    fontSize: 16,
   },
 });
 
