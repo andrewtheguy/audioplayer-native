@@ -4,6 +4,7 @@ import { useNostrSession } from "@/hooks/useNostrSession";
 import type { HistoryEntry } from "@/lib/history";
 import { getHistory, saveHistory } from "@/lib/history";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
+import Slider from "@react-native-community/slider";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -45,10 +46,6 @@ function formatTime(seconds: number | null): string {
     .padStart(2, "0")}`;
 }
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
 export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   ({ secret, onSessionStatusChange }, ref) => {
     const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -58,11 +55,11 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const [nowPlayingTitle, setNowPlayingTitle] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
-    const [seekBarWidth, setSeekBarWidth] = useState(0);
-    const [volumeBarWidth, setVolumeBarWidth] = useState(0);
-    const [isScrubbing, setIsScrubbing] = useState(false);
-    const [scrubTime, setScrubTime] = useState(0);
     const [volume, setVolume] = useState(1);
+
+    // Scrubbing state - when true, we show scrub position instead of actual position
+    const [isScrubbing, setIsScrubbing] = useState(false);
+    const [scrubPosition, setScrubPosition] = useState(0);
 
     // TrackPlayer hooks for real-time updates
     const { position, duration } = useProgress(500);
@@ -128,7 +125,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     }, []);
 
     const applyVolume = useCallback(async (nextVolume: number) => {
-      const clamped = clamp(nextVolume, 0, 1);
+      const clamped = Math.min(1, Math.max(0, nextVolume));
       setVolume(clamped);
       try {
         await TrackPlayer.setVolume(clamped);
@@ -377,6 +374,24 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       ]);
     };
 
+    // Seek slider handlers
+    const handleSeekStart = () => {
+      setIsScrubbing(true);
+      setScrubPosition(position);
+    };
+
+    const handleSeekChange = (value: number) => {
+      setScrubPosition(value);
+    };
+
+    const handleSeekComplete = async (value: number) => {
+      setIsScrubbing(false);
+      await seekTo(value);
+    };
+
+    // Display position (scrub position while dragging, actual position otherwise)
+    const displayPosition = isScrubbing ? scrubPosition : position;
+
     if (isViewOnly) {
       return (
         <View style={styles.container}>
@@ -465,69 +480,25 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             {nowPlayingTitle ?? nowPlayingUrl ?? "Nothing loaded"}
           </Text>
           <View style={styles.seekRow}>
-            <Text style={styles.meta}>
-              {formatTime(isScrubbing ? scrubTime : position)}
-            </Text>
+            <Text style={styles.meta}>{formatTime(displayPosition)}</Text>
             <Text style={styles.meta}>{isLiveStream ? "Live" : formatTime(duration)}</Text>
           </View>
-          <View
-            style={[
-              styles.seekBar,
-              (isViewOnly || isLiveStream || !duration) && styles.seekBarDisabled,
-            ]}
-            onLayout={(event) => setSeekBarWidth(event.nativeEvent.layout.width)}
-            onStartShouldSetResponder={() => !isViewOnly && !isLiveStream && !!duration && duration > 0}
-            onResponderGrant={(event) => {
-              if (isViewOnly || isLiveStream || !duration || seekBarWidth === 0) return;
-              const ratio = clamp(event.nativeEvent.locationX / seekBarWidth, 0, 1);
-              const target = ratio * duration;
-              setIsScrubbing(true);
-              setScrubTime(target);
-            }}
-            onResponderMove={(event) => {
-              if (!isScrubbing || isViewOnly || isLiveStream || !duration || seekBarWidth === 0)
-                return;
-              const ratio = clamp(event.nativeEvent.locationX / seekBarWidth, 0, 1);
-              setScrubTime(ratio * duration);
-            }}
-            onResponderRelease={async () => {
-              if (!isScrubbing || isViewOnly || isLiveStream || !duration) {
-                setIsScrubbing(false);
-                return;
-              }
-              setIsScrubbing(false);
-              await TrackPlayer.seekTo(scrubTime);
-            }}
-            onResponderTerminate={() => {
-              setIsScrubbing(false);
-            }}
-          >
-            <View style={styles.seekTrack} />
-            <View
-              style={[
-                styles.seekProgress,
-                {
-                  width: `${clamp(
-                    duration ? (isScrubbing ? scrubTime : position) / duration : 0,
-                    0,
-                    1
-                  ) * 100}%`,
-                },
-              ]}
-            />
-            <View
-              style={[
-                styles.seekThumb,
-                {
-                  left: `${clamp(
-                    duration ? (isScrubbing ? scrubTime : position) / duration : 0,
-                    0,
-                    1
-                  ) * 100}%`,
-                },
-              ]}
-            />
-          </View>
+
+          {/* Seek Slider */}
+          <Slider
+            style={styles.slider}
+            minimumValue={0}
+            maximumValue={duration || 1}
+            value={displayPosition}
+            onSlidingStart={handleSeekStart}
+            onValueChange={handleSeekChange}
+            onSlidingComplete={handleSeekComplete}
+            disabled={isViewOnly || isLiveStream || !duration}
+            minimumTrackTintColor="#60A5FA"
+            maximumTrackTintColor="#374151"
+            thumbTintColor="#93C5FD"
+          />
+
           <View style={[styles.row, styles.rowCentered]}>
             <Pressable
               style={[styles.secondaryButton, isViewOnly && styles.buttonDisabled]}
@@ -555,29 +526,24 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               <Text style={styles.secondaryButtonText}>+30s</Text>
             </Pressable>
           </View>
+
           <View style={styles.volumeRow}>
             <Text style={styles.meta}>Volume</Text>
             <Text style={styles.meta}>{Math.round(volume * 100)}%</Text>
           </View>
-          <View
-            style={[styles.volumeBar, isViewOnly && styles.seekBarDisabled]}
-            onLayout={(event) => setVolumeBarWidth(event.nativeEvent.layout.width)}
-            onStartShouldSetResponder={() => !isViewOnly}
-            onResponderGrant={(event) => {
-              if (isViewOnly || volumeBarWidth === 0) return;
-              const ratio = clamp(event.nativeEvent.locationX / volumeBarWidth, 0, 1);
-              void applyVolume(ratio);
-            }}
-            onResponderMove={(event) => {
-              if (isViewOnly || volumeBarWidth === 0) return;
-              const ratio = clamp(event.nativeEvent.locationX / volumeBarWidth, 0, 1);
-              void applyVolume(ratio);
-            }}
-          >
-            <View style={styles.seekTrack} />
-            <View style={[styles.seekProgress, { width: `${volume * 100}%` }]} />
-            <View style={[styles.seekThumb, { left: `${volume * 100}%` }]} />
-          </View>
+
+          {/* Volume Slider */}
+          <Slider
+            style={styles.slider}
+            minimumValue={0}
+            maximumValue={1}
+            value={volume}
+            onValueChange={(value) => void applyVolume(value)}
+            disabled={isViewOnly}
+            minimumTrackTintColor="#60A5FA"
+            maximumTrackTintColor="#374151"
+            thumbTintColor="#93C5FD"
+          />
         </View>
 
         <View style={styles.card}>
@@ -697,45 +663,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 8,
   },
-  seekBar: {
-    height: 18,
-    marginTop: 8,
-    justifyContent: "center",
-  },
-  seekTrack: {
-    height: 4,
-    borderRadius: 999,
-    backgroundColor: "#374151",
-  },
-  seekProgress: {
-    position: "absolute",
-    top: 7,
-    height: 4,
-    borderRadius: 999,
-    backgroundColor: "#60A5FA",
-  },
-  seekThumb: {
-    position: "absolute",
-    top: 2,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: "#93C5FD",
-    transform: [{ translateX: -7 }],
-  },
-  seekBarDisabled: {
-    opacity: 0.5,
+  slider: {
+    width: "100%",
+    height: 40,
   },
   volumeRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginTop: 16,
-  },
-  volumeBar: {
-    height: 18,
-    marginTop: 8,
-    justifyContent: "center",
   },
   nowPlaying: {
     color: "#F9FAFB",
