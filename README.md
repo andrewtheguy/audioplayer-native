@@ -1,50 +1,44 @@
-# Welcome to your Expo app 👋
+# audioplayer-native
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A focused iOS audio player built with Expo. Stream audio URLs, keep a local listening history, and optionally sync history across devices using a 16-character secret over Nostr relays.
 
-## Get started
+## Features
+- Stream audio from a URL with play/pause, seek bar, and ±15s/+30s skips.
+- Volume control and time display in hh:mm:ss.
+- Local history with last position and quick resume.
+- Nostr-based history sync using a shared secret and session control (start/takeover/sync).
+- View-only mode when another session is active.
 
-1. Install dependencies
+## Requirements
+- Node.js + npm
+- Xcode (for iOS simulator or device builds)
+- An Apple ID signed into Xcode for device signing
 
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
+## Install
 ```bash
-npm run reset-project
+npm install
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## Run on iOS
+```bash
+npm run ios
+```
 
-## Learn more
+## Build a release IPA (local)
+```bash
+# Generates a release build using Xcode
+npx expo prebuild -p ios
+open ios/audioplayer-native.xcworkspace
+```
+Then in Xcode:
+- **Product > Archive**
+- Distribute via Ad Hoc/TestFlight as needed.
 
-To learn more about developing your project with Expo, look at the following resources:
+## App flow
+- Open the app and enter a 16-character secret (or generate a new one).
+- Load a stream URL and optionally add a title.
+- Start a sync session to push/pull history to Nostr relays.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## Notes
+- The secret grants access to the synced history. Treat it like a password.
+- iOS-only: `app.json` is configured for the iOS platform.
