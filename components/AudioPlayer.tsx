@@ -375,6 +375,28 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       ]);
     };
 
+    const handleRemoveFromHistory = (urlToRemove: string) => {
+      if (isViewOnly) return;
+      const next = history.filter((entry) => entry.url !== urlToRemove);
+      persistHistory(next);
+    };
+
+    const handleUpdateNowPlayingTitle = (newTitle: string) => {
+      if (isViewOnly || !currentUrlRef.current) return;
+      currentTitleRef.current = newTitle || null;
+      setNowPlayingTitle(newTitle || null);
+      // Update in history as well
+      setHistory((prev) => {
+        const updated = prev.map((entry) =>
+          entry.url === currentUrlRef.current
+            ? { ...entry, title: newTitle || undefined }
+            : entry
+        );
+        void saveHistory(updated);
+        return updated;
+      });
+    };
+
     // Seek slider handlers
     const handleSeekStart = () => {
       setIsScrubbing(true);
@@ -511,9 +533,23 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
         <View style={styles.card}>
           <Text style={styles.nowPlaying}>Now Playing</Text>
-          <Text style={styles.nowPlayingTitle}>
-            {nowPlayingTitle ?? nowPlayingUrl ?? "Nothing loaded"}
-          </Text>
+          {nowPlayingUrl ? (
+            <>
+              <TextInput
+                style={styles.nowPlayingTitleInput}
+                value={nowPlayingTitle ?? ""}
+                onChangeText={handleUpdateNowPlayingTitle}
+                placeholder="Add title..."
+                placeholderTextColor="#6B7280"
+                editable={!isViewOnly}
+              />
+              <Text style={styles.nowPlayingUrl} numberOfLines={1}>
+                {nowPlayingUrl}
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.nowPlayingTitle}>Nothing loaded</Text>
+          )}
           <View style={styles.seekRow}>
             <Text style={styles.meta}>{formatTime(displayPosition)}</Text>
             <Text style={styles.meta}>{isLiveStream ? "Live" : formatTime(duration)}</Text>
@@ -595,15 +631,25 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               <Text style={styles.meta}>No history yet.</Text>
             ) : (
               history.map((entry) => (
-                <Pressable
-                  key={entry.url}
-                  style={styles.historyItem}
-                  onPress={() => loadFromHistory(entry)}
-                  disabled={isViewOnly}
-                >
-                  <Text style={styles.historyTitle}>{entry.title ?? entry.url}</Text>
-                  <Text style={styles.meta}>{formatTime(entry.position)}</Text>
-                </Pressable>
+                <View key={entry.url} style={styles.historyItem}>
+                  <Pressable
+                    style={styles.historyContent}
+                    onPress={() => loadFromHistory(entry)}
+                    disabled={isViewOnly}
+                  >
+                    <Text style={styles.historyTitle}>{entry.title || "Untitled"}</Text>
+                    <Text style={styles.historyUrl} numberOfLines={1}>{entry.url}</Text>
+                    <Text style={styles.historyMeta}>{formatTime(entry.position)}</Text>
+                  </Pressable>
+                  {!isViewOnly && (
+                    <Pressable
+                      style={styles.removeButton}
+                      onPress={() => handleRemoveFromHistory(entry.url)}
+                    >
+                      <MaterialIcons name="close" size={18} color="#9CA3AF" />
+                    </Pressable>
+                  )}
+                </View>
               ))
             )}
           </ScrollView>
@@ -717,6 +763,18 @@ const styles = StyleSheet.create({
     color: "#E5E7EB",
     marginTop: 6,
   },
+  nowPlayingTitleInput: {
+    color: "#F9FAFB",
+    fontSize: 16,
+    fontWeight: "500",
+    marginTop: 6,
+    padding: 0,
+  },
+  nowPlayingUrl: {
+    color: "#6B7280",
+    fontSize: 12,
+    marginTop: 4,
+  },
   meta: {
     color: "#9CA3AF",
     marginTop: 6,
@@ -729,12 +787,32 @@ const styles = StyleSheet.create({
     maxHeight: 220,
   },
   historyItem: {
+    flexDirection: "row",
+    alignItems: "center",
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: "#374151",
   },
+  historyContent: {
+    flex: 1,
+  },
   historyTitle: {
     color: "#F9FAFB",
+    fontWeight: "500",
+  },
+  historyUrl: {
+    color: "#6B7280",
+    fontSize: 12,
+    marginTop: 2,
+  },
+  historyMeta: {
+    color: "#9CA3AF",
+    fontSize: 12,
+    marginTop: 4,
+  },
+  removeButton: {
+    padding: 8,
+    marginLeft: 8,
   },
   clear: {
     color: "#FCA5A5",
