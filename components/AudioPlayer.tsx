@@ -95,6 +95,28 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     };
   }, []);
 
+  useEffect(() => {
+    if (session.sessionStatus === "active") return;
+    if (soundRef.current) {
+      const sound = soundRef.current;
+      soundRef.current = null;
+      Promise.resolve()
+        .then(() => sound.stopAsync())
+        .catch(() => {})
+        .finally(() => {
+          void sound.unloadAsync().catch(() => {});
+        });
+    }
+    setIsPlaying(false);
+    pendingSeekPositionRef.current = null;
+    pendingSeekAttemptsRef.current = 0;
+    seekingToTargetRef.current = false;
+    if (pendingSeekTimerRef.current) {
+      clearTimeout(pendingSeekTimerRef.current);
+      pendingSeekTimerRef.current = null;
+    }
+  }, [session.sessionStatus]);
+
   const persistHistory = useCallback((next: HistoryEntry[]) => {
     setHistory(next);
     void saveHistory(next);
@@ -435,6 +457,52 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       },
     ]);
   };
+
+  if (isViewOnly) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.heading}>Audio Player</Text>
+        <View style={styles.card}>
+          <Text style={styles.nowPlaying}>Now Playing (View Only)</Text>
+          <Text style={styles.nowPlayingTitle}>
+            {nowPlayingTitle ?? nowPlayingUrl ?? "Nothing loaded"}
+          </Text>
+          <Text style={styles.meta}>
+            {formatTime(currentTime)} / {formatTime(duration)} {isLiveStream ? "(Live)" : ""}
+          </Text>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.nowPlaying}>History</Text>
+          <ScrollView style={styles.historyList}>
+            {history.length === 0 ? (
+              <Text style={styles.meta}>No history yet.</Text>
+            ) : (
+              history.map((entry) => (
+                <View key={entry.url} style={styles.historyItem}>
+                  <Text style={styles.historyTitle}>{entry.title ?? entry.url}</Text>
+                  <Text style={styles.meta}>{formatTime(entry.position)}</Text>
+                </View>
+              ))
+            )}
+          </ScrollView>
+        </View>
+
+        <NostrSyncPanel
+          ref={syncRef}
+          secret={secret}
+          history={history}
+          session={session}
+          onHistoryLoaded={(merged) => {
+            setHistory(merged);
+            void saveHistory(merged);
+          }}
+          onRemoteSync={handleRemoteSync}
+          onTakeOver={handleRemoteSync}
+        />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
