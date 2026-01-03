@@ -29,9 +29,9 @@ async function setupPlayer() {
       autoHandleInterruptions: true,
       waitForBuffer: true,
       // Buffer configuration to reduce jitter
-      minBuffer: 30, // 30 seconds minimum buffer
-      maxBuffer: 120, // 2 minutes max buffer
-      playBuffer: 5, // Start playback after 5 seconds buffered
+      minBuffer: 15, // 15 seconds minimum buffer
+      maxBuffer: 300, // 5 minutes max buffer
+      playBuffer: 2.5, // Start playback after 2.5 seconds buffered
       backBuffer: 30, // Keep 30 seconds behind current position
     });
 

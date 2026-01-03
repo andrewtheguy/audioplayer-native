@@ -19,26 +19,10 @@ A focused iOS audio player built with Expo. Stream audio URLs, keep a local list
 npm install
 ```
 
-## Run on iOS Simulator (fastest)
+## Run on iOS
 ```bash
-npx expo start --ios
+npm run ios
 ```
-
-## Run on a real iOS device (no App Store)
-1) Generate the native iOS project once:
-```bash
-npx expo prebuild -p ios
-```
-
-2) Open the project in Xcode:
-```bash
-open ios/audioplayer-native.xcworkspace
-```
-
-3) In Xcode:
-- Select your device in the toolbar.
-- Set your Team under **Signing & Capabilities**.
-- Click **Run**.
 
 ## Build a release IPA (local)
 ```bash
