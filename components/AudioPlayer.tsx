@@ -18,7 +18,6 @@ import {
 } from "react-native";
 import TrackPlayer, {
   State,
-  TrackType,
   usePlaybackState,
   useProgress,
 } from "react-native-track-player";
@@ -141,7 +140,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     // Stop playback when session becomes inactive
     useEffect(() => {
       if (session.sessionStatus === "active") return;
-      void TrackPlayer.stop().catch(() => { });
+      void TrackPlayer.stop().catch(() => {});
     }, [session.sessionStatus]);
 
     const persistHistory = useCallback((next: HistoryEntry[]) => {
@@ -204,16 +203,11 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           // Reset the player and add the new track
           await TrackPlayer.reset();
 
-          const type = urlToLoad.endsWith(".m3u8")
-            ? TrackType.HLS
-            : TrackType.Default;
-
           await TrackPlayer.add({
             id: urlToLoad,
             url: urlToLoad,
             title: resolvedTitle || "Stream",
             artist: urlToLoad,
-            type,
           });
 
           currentUrlRef.current = urlToLoad;
