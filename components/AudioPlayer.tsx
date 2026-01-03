@@ -57,6 +57,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const [loading, setLoading] = useState(false);
     const [volume, setVolume] = useState(1);
     const [showUrlInput, setShowUrlInput] = useState(false);
+    const [isEditingTitle, setIsEditingTitle] = useState(false);
+    const [editingTitleValue, setEditingTitleValue] = useState("");
 
     // Scrubbing state - when true, we show scrub position instead of actual position
     const [isScrubbing, setIsScrubbing] = useState(false);
@@ -375,14 +377,38 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       ]);
     };
 
-    const handleRemoveFromHistory = (urlToRemove: string) => {
+    const handleRemoveFromHistory = (urlToRemove: string, entryTitle?: string) => {
       if (isViewOnly) return;
-      const next = history.filter((entry) => entry.url !== urlToRemove);
-      persistHistory(next);
+      Alert.alert(
+        "Remove from history",
+        `Remove "${entryTitle || urlToRemove}"?`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Remove",
+            style: "destructive",
+            onPress: () => {
+              const next = history.filter((entry) => entry.url !== urlToRemove);
+              persistHistory(next);
+            },
+          },
+        ]
+      );
     };
 
-    const handleUpdateNowPlayingTitle = (newTitle: string) => {
+    const startEditingTitle = () => {
+      setEditingTitleValue(nowPlayingTitle ?? "");
+      setIsEditingTitle(true);
+    };
+
+    const cancelEditingTitle = () => {
+      setIsEditingTitle(false);
+      setEditingTitleValue("");
+    };
+
+    const saveEditingTitle = () => {
       if (isViewOnly || !currentUrlRef.current) return;
+      const newTitle = editingTitleValue.trim();
       currentTitleRef.current = newTitle || null;
       setNowPlayingTitle(newTitle || null);
       // Update in history as well
@@ -395,6 +421,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         void saveHistory(updated);
         return updated;
       });
+      setIsEditingTitle(false);
+      setEditingTitleValue("");
     };
 
     // Seek slider handlers
@@ -535,14 +563,35 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           <Text style={styles.nowPlaying}>Now Playing</Text>
           {nowPlayingUrl ? (
             <>
-              <TextInput
-                style={styles.nowPlayingTitleInput}
-                value={nowPlayingTitle ?? ""}
-                onChangeText={handleUpdateNowPlayingTitle}
-                placeholder="Add title..."
-                placeholderTextColor="#6B7280"
-                editable={!isViewOnly}
-              />
+              {isEditingTitle ? (
+                <View style={styles.editTitleRow}>
+                  <TextInput
+                    style={styles.editTitleInput}
+                    value={editingTitleValue}
+                    onChangeText={setEditingTitleValue}
+                    placeholder="Enter title..."
+                    placeholderTextColor="#6B7280"
+                    autoFocus
+                  />
+                  <Pressable style={styles.saveButton} onPress={saveEditingTitle}>
+                    <MaterialIcons name="check" size={20} color="#10B981" />
+                  </Pressable>
+                  <Pressable style={styles.cancelEditButton} onPress={cancelEditingTitle}>
+                    <MaterialIcons name="close" size={20} color="#9CA3AF" />
+                  </Pressable>
+                </View>
+              ) : (
+                <View style={styles.titleRow}>
+                  <Text style={styles.nowPlayingTitleText}>
+                    {nowPlayingTitle || "Untitled"}
+                  </Text>
+                  {!isViewOnly && (
+                    <Pressable style={styles.editButton} onPress={startEditingTitle}>
+                      <MaterialIcons name="edit" size={16} color="#9CA3AF" />
+                    </Pressable>
+                  )}
+                </View>
+              )}
               <Text style={styles.nowPlayingUrl} numberOfLines={1}>
                 {nowPlayingUrl}
               </Text>
@@ -644,7 +693,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
                   {!isViewOnly && (
                     <Pressable
                       style={styles.removeButton}
-                      onPress={() => handleRemoveFromHistory(entry.url)}
+                      onPress={() => handleRemoveFromHistory(entry.url, entry.title)}
                     >
                       <MaterialIcons name="close" size={18} color="#9CA3AF" />
                     </Pressable>
@@ -855,6 +904,41 @@ const styles = StyleSheet.create({
     color: "#F9FAFB",
     fontWeight: "600",
     fontSize: 16,
+  },
+  editTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 6,
+  },
+  editTitleInput: {
+    flex: 1,
+    backgroundColor: "#111827",
+    borderRadius: 8,
+    padding: 10,
+    color: "#F9FAFB",
+    fontSize: 16,
+  },
+  saveButton: {
+    padding: 8,
+  },
+  cancelEditButton: {
+    padding: 8,
+  },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 6,
+  },
+  nowPlayingTitleText: {
+    color: "#E5E7EB",
+    fontSize: 16,
+    fontWeight: "500",
+    flex: 1,
+  },
+  editButton: {
+    padding: 4,
   },
 });
 
