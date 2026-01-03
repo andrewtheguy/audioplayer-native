@@ -55,6 +55,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   const currentTitleRef = useRef<string | null>(null);
   const currentTimeRef = useRef(0);
   const lastAutoSaveAtRef = useRef(0);
+  const expectedPositionRef = useRef<number | null>(null);
+  const minSavePositionRef = useRef<number | null>(null);
+  const allowBackwardSaveUntilRef = useRef(0);
 
   const pendingSeekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSeekAttemptsRef = useRef(0);
@@ -128,12 +131,22 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       if (!currentUrlRef.current) return;
       if (isLiveStreamRef.current && !options?.allowLive) return;
 
+      const positionToSave = Number.isFinite(position) ? (position as number) : currentTime;
+      const nowMs = Date.now();
+      if (
+        minSavePositionRef.current !== null &&
+        positionToSave + 0.5 < minSavePositionRef.current &&
+        nowMs > allowBackwardSaveUntilRef.current
+      ) {
+        return;
+      }
+
       const now = new Date().toISOString();
       const entry: HistoryEntry = {
         url: currentUrlRef.current,
         title: currentTitleRef.current ?? undefined,
         lastPlayedAt: now,
-        position: Number.isFinite(position) ? (position as number) : currentTime,
+        position: positionToSave,
       };
 
       setHistory((prev) => {
@@ -147,6 +160,11 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         void saveHistory(next);
         return next;
       });
+      if (minSavePositionRef.current === null) {
+        minSavePositionRef.current = positionToSave;
+      } else if (positionToSave > minSavePositionRef.current) {
+        minSavePositionRef.current = positionToSave;
+      }
     },
     [currentTime, isViewOnly]
   );
@@ -234,8 +252,21 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     if (
       status.isPlaying &&
       !isLiveStreamRef.current &&
+      pendingSeekPositionRef.current === null &&
       Date.now() - lastAutoSaveAtRef.current >= 5000
     ) {
+      if (
+        expectedPositionRef.current !== null &&
+        nextTime + 0.5 < expectedPositionRef.current
+      ) {
+        return;
+      }
+      if (
+        expectedPositionRef.current !== null &&
+        nextTime + 0.5 >= expectedPositionRef.current
+      ) {
+        expectedPositionRef.current = null;
+      }
       lastAutoSaveAtRef.current = Date.now();
       saveHistoryEntry(nextTime);
     }
@@ -259,6 +290,13 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
         currentUrlRef.current = urlToLoad;
         currentTitleRef.current = resolvedTitle ?? null;
+        if (options?.skipInitialSave) {
+          if (expectedPositionRef.current !== null) {
+            minSavePositionRef.current = expectedPositionRef.current;
+          }
+        } else {
+          minSavePositionRef.current = 0;
+        }
         setNowPlayingUrl(urlToLoad);
         setNowPlayingTitle(resolvedTitle ?? null);
 
@@ -313,6 +351,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         return;
       }
 
+      expectedPositionRef.current = entry.position;
       pendingSeekPositionRef.current = entry.position;
       pendingSeekAttemptsRef.current = 0;
       seekingToTargetRef.current = false;
@@ -363,6 +402,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       return;
     }
 
+    expectedPositionRef.current = 0;
     void loadUrl(urlToLoad, title.trim() || undefined);
   };
 
@@ -386,6 +426,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     if (isViewOnly) return;
     const sound = soundRef.current;
     if (!sound || isLiveStreamRef.current) return;
+    allowBackwardSaveUntilRef.current = Date.now() + 2000;
     const next = Math.max(0, currentTime + deltaSeconds);
     await sound.setPositionAsync(next * 1000);
   };
@@ -427,11 +468,13 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     if (prev !== "active" && session.sessionStatus === "active") {
       const entry = history[0];
       if (entry) {
+        expectedPositionRef.current = entry.position;
         pendingSeekPositionRef.current = entry.position;
         pendingSeekAttemptsRef.current = 0;
         seekingToTargetRef.current = false;
         void loadUrl(entry.url, entry.title, { forceReset: true, skipInitialSave: true });
       } else if (currentUrlRef.current) {
+        expectedPositionRef.current = currentTime;
         pendingSeekPositionRef.current = currentTime;
         pendingSeekAttemptsRef.current = 0;
         seekingToTargetRef.current = false;
