@@ -3,9 +3,10 @@ import type { SessionStatus } from "@/hooks/useNostrSession";
 import { useNostrSession } from "@/hooks/useNostrSession";
 import type { HistoryEntry } from "@/lib/history";
 import { getHistory, saveHistory } from "@/lib/history";
-import { Audio } from "expo-av";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
+import { Audio, InterruptionModeIOS } from "expo-av";
+import { Command, MediaControl, PlaybackState } from "expo-media-control";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -77,14 +78,30 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   const isViewOnly = session.sessionStatus !== "active";
   const syncRef = useRef<NostrSyncPanelHandle | null>(null);
   const lastSessionStatusRef = useRef<SessionStatus>(session.sessionStatus);
+  const lastPlaybackStateRef = useRef<PlaybackState>(PlaybackState.NONE);
+  const lastPlaybackRateRef = useRef(1);
+  const lastReportedPositionRef = useRef(0);
 
   useEffect(() => {
     isLiveStreamRef.current = isLiveStream;
   }, [isLiveStream]);
 
   useEffect(() => {
+    void Audio.setAudioModeAsync({
+      allowsRecordingIOS: false,
+      staysActiveInBackground: true,
+      playsInSilentModeIOS: true,
+      interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+      shouldDuckAndroid: true,
+      playThroughEarpieceAndroid: false,
+    });
+  }, []);
+
+  useEffect(() => {
     onSessionStatusChange?.(session.sessionStatus);
   }, [onSessionStatusChange, session.sessionStatus]);
+
+  // Media control setup lives below after callbacks are defined.
 
   useImperativeHandle(ref, () => ({
     startSession: () => syncRef.current?.startSession(),
@@ -93,6 +110,72 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     syncNow: () => syncRef.current?.syncNow(),
     getSessionStatus: () => session.sessionStatus,
   }));
+
+  const reportPlaybackState = useCallback(
+    async (state: PlaybackState, positionSeconds?: number, rate?: number) => {
+      const position =
+        typeof positionSeconds === "number" && Number.isFinite(positionSeconds)
+          ? Math.max(0, positionSeconds)
+          : 0;
+      const playbackRate =
+        typeof rate === "number" ? rate : state === PlaybackState.PLAYING ? 1 : 0;
+      if (
+        lastPlaybackStateRef.current === state &&
+        Math.abs(lastReportedPositionRef.current - position) < 1 &&
+        lastPlaybackRateRef.current === playbackRate
+      ) {
+        return;
+      }
+      lastPlaybackStateRef.current = state;
+      lastReportedPositionRef.current = position;
+      lastPlaybackRateRef.current = playbackRate;
+      try {
+        await MediaControl.updatePlaybackState(state, position, playbackRate);
+      } catch {
+        // Ignore media control errors.
+      }
+    },
+    []
+  );
+
+  const handlePlay = useCallback(async () => {
+    if (isViewOnly) return;
+    const sound = soundRef.current;
+    if (!sound) return;
+    try {
+      await sound.playAsync();
+      await reportPlaybackState(PlaybackState.PLAYING, currentTimeRef.current, 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Playback error");
+    }
+  }, [isViewOnly, reportPlaybackState]);
+
+  const handlePause = useCallback(async () => {
+    if (isViewOnly) return;
+    const sound = soundRef.current;
+    if (!sound) return;
+    try {
+      await sound.pauseAsync();
+      await reportPlaybackState(PlaybackState.PAUSED, currentTimeRef.current, 0);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Playback error");
+    }
+  }, [isViewOnly, reportPlaybackState]);
+
+  const handleStop = useCallback(async () => {
+    if (isViewOnly) return;
+    const sound = soundRef.current;
+    if (!sound) return;
+    try {
+      await sound.stopAsync();
+      await sound.setPositionAsync(0);
+      currentTimeRef.current = 0;
+      setCurrentTime(0);
+      await reportPlaybackState(PlaybackState.STOPPED, 0, 0);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Playback error");
+    }
+  }, [isViewOnly, reportPlaybackState]);
 
   const seekTo = useCallback(
     async (targetSeconds: number) => {
@@ -103,11 +186,16 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         await soundRef.current.setPositionAsync(next * 1000);
         currentTimeRef.current = next;
         setCurrentTime(next);
+        await reportPlaybackState(
+          isPlaying ? PlaybackState.PLAYING : PlaybackState.PAUSED,
+          next,
+          isPlaying ? 1 : 0
+        );
       } catch {
         // Ignore seek failures (e.g., unloaded sound).
       }
     },
-    []
+    [isPlaying, reportPlaybackState]
   );
 
   const applyVolume = useCallback(
@@ -145,7 +233,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         });
     }
     setIsPlaying(false);
-  }, [session.sessionStatus]);
+    void reportPlaybackState(PlaybackState.PAUSED, 0, 0);
+  }, [reportPlaybackState, session.sessionStatus]);
 
   const persistHistory = useCallback((next: HistoryEntry[]) => {
     setHistory(next);
@@ -190,7 +279,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       return;
     }
 
-    setIsPlaying(status.isPlaying);
+    const nextIsPlaying = status.isPlaying;
+    setIsPlaying(nextIsPlaying);
     const nextTime = status.positionMillis / 1000;
     currentTimeRef.current = nextTime;
     setCurrentTime(nextTime);
@@ -205,8 +295,17 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       isLiveStreamRef.current = true;
     }
 
+    if (status.didJustFinish) {
+      void reportPlaybackState(PlaybackState.STOPPED, nextTime, 0);
+    } else {
+      const desiredState = nextIsPlaying ? PlaybackState.PLAYING : PlaybackState.PAUSED;
+      if (lastPlaybackStateRef.current !== desiredState) {
+        void reportPlaybackState(desiredState, nextTime, status.rate ?? 1);
+      }
+    }
+
     if (
-      status.isPlaying &&
+      nextIsPlaying &&
       !isLiveStreamRef.current &&
       Date.now() - lastAutoSaveAtRef.current >= 5000
     ) {
@@ -269,6 +368,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
         currentTimeRef.current = targetPosition;
         setCurrentTime(targetPosition);
+        void reportPlaybackState(PlaybackState.PAUSED, targetPosition, 0);
 
         if (!options?.skipInitialSave) {
           saveHistoryEntry(0, { allowLive: true });
@@ -351,17 +451,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
   const togglePlayPause = async () => {
     if (isViewOnly) return;
-    const sound = soundRef.current;
-    if (!sound) return;
-
-    try {
-      if (isPlaying) {
-        await sound.pauseAsync();
-      } else {
-        await sound.playAsync();
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Playback error");
+    if (isPlaying) {
+      await handlePause();
+    } else {
+      await handlePlay();
     }
   };
 
@@ -370,8 +463,84 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const sound = soundRef.current;
     if (!sound || isLiveStreamRef.current) return;
     const next = Math.max(0, currentTime + deltaSeconds);
-    await sound.setPositionAsync(next * 1000);
+    await seekTo(next);
   };
+
+  useEffect(() => {
+    let removeListener: (() => void) | null = null;
+
+    const setupMediaControls = async () => {
+      try {
+        await MediaControl.enableMediaControls({
+          capabilities: [
+            Command.PLAY,
+            Command.PAUSE,
+            Command.STOP,
+            Command.SEEK,
+            Command.SKIP_FORWARD,
+            Command.SKIP_BACKWARD,
+          ],
+          ios: { skipInterval: 15 },
+          android: { skipInterval: 15 },
+        });
+      } catch {
+        return;
+      }
+
+      removeListener = MediaControl.addListener((event) => {
+        if (isViewOnly) return;
+        switch (event.command) {
+          case Command.PLAY:
+            void handlePlay();
+            break;
+          case Command.PAUSE:
+            void handlePause();
+            break;
+          case Command.STOP:
+            void handleStop();
+            break;
+          case Command.SEEK: {
+            const position = event.data?.position;
+            if (typeof position === "number") {
+              void seekTo(position);
+            }
+            break;
+          }
+          case Command.SKIP_FORWARD: {
+            const interval =
+              typeof event.data?.interval === "number" ? event.data.interval : 30;
+            void seekBy(interval);
+            break;
+          }
+          case Command.SKIP_BACKWARD: {
+            const interval =
+              typeof event.data?.interval === "number" ? event.data.interval : 15;
+            void seekBy(-interval);
+            break;
+          }
+          default:
+            break;
+        }
+      });
+    };
+
+    void setupMediaControls();
+
+    return () => {
+      removeListener?.();
+      void MediaControl.disableMediaControls();
+    };
+  }, [handlePause, handlePlay, handleStop, isViewOnly, seekBy, seekTo]);
+
+  useEffect(() => {
+    if (!nowPlayingUrl && !nowPlayingTitle) return;
+    void MediaControl.updateMetadata({
+      title: nowPlayingTitle ?? "Stream",
+      artist: nowPlayingUrl ?? undefined,
+      duration: duration ?? undefined,
+      elapsedTime: currentTimeRef.current,
+    });
+  }, [duration, nowPlayingTitle, nowPlayingUrl]);
 
   useEffect(() => {
     if (!isPlaying) {

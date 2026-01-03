@@ -13,10 +13,20 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.andrewchen5678.audioplayer-native"
+      "bundleIdentifier": "com.andrewchen5678.audioplayer-native",
+      "infoPlist": {
+        "UIBackgroundModes": ["audio"]
+      }
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-media-control",
+        {
+          "enableBackgroundAudio": true,
+          "audioSessionCategory": "playback"
+        }
+      ],
       [
         "expo-splash-screen",
         {
