@@ -64,8 +64,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const [isScrubbing, setIsScrubbing] = useState(false);
     const [scrubPosition, setScrubPosition] = useState(0);
 
-    // TrackPlayer hooks for real-time updates
-    const { position, duration } = useProgress(500);
+    // TrackPlayer hooks for real-time updates (1 second interval to reduce re-renders)
+    const { position, duration } = useProgress(1000);
     const playbackState = usePlaybackState();
     const isPlaying = playbackState.state === State.Playing;
     const isLiveStream = !duration || duration === 0 || !Number.isFinite(duration);
