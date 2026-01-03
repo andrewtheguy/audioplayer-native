@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm uninstall:*)",
+      "Bash(expo :*)",
+      "Bash(npm install:*)"
+    ]
+  }
+}

@@ -4,8 +4,6 @@ import { useNostrSession } from "@/hooks/useNostrSession";
 import type { HistoryEntry } from "@/lib/history";
 import { getHistory, saveHistory } from "@/lib/history";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { Audio, InterruptionModeIOS, type AVPlaybackStatus } from "expo-av";
-import { Command, MediaControl, PlaybackState } from "expo-media-control";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -17,6 +15,11 @@ import {
   TextInput,
   View,
 } from "react-native";
+import TrackPlayer, {
+  State,
+  usePlaybackState,
+  useProgress,
+} from "react-native-track-player";
 
 export interface AudioPlayerHandle {
   startSession: () => void;
@@ -41,593 +44,565 @@ function formatTime(seconds: number | null): string {
     .toString()
     .padStart(2, "0")}`;
 }
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
 export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   ({ secret, onSessionStatusChange }, ref) => {
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [url, setUrl] = useState("");
-  const [title, setTitle] = useState("");
-  const [nowPlayingUrl, setNowPlayingUrl] = useState<string | null>(null);
-  const [nowPlayingTitle, setNowPlayingTitle] = useState<string | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState<number | null>(null);
-  const [isLiveStream, setIsLiveStream] = useState(false);
-  const [volume, setVolume] = useState(1);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [seekBarWidth, setSeekBarWidth] = useState(0);
-  const [volumeBarWidth, setVolumeBarWidth] = useState(0);
-  const [isScrubbing, setIsScrubbing] = useState(false);
-  const [scrubTime, setScrubTime] = useState(0);
+    const [history, setHistory] = useState<HistoryEntry[]>([]);
+    const [url, setUrl] = useState("");
+    const [title, setTitle] = useState("");
+    const [nowPlayingUrl, setNowPlayingUrl] = useState<string | null>(null);
+    const [nowPlayingTitle, setNowPlayingTitle] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [seekBarWidth, setSeekBarWidth] = useState(0);
+    const [volumeBarWidth, setVolumeBarWidth] = useState(0);
+    const [isScrubbing, setIsScrubbing] = useState(false);
+    const [scrubTime, setScrubTime] = useState(0);
+    const [volume, setVolume] = useState(1);
 
-  const soundRef = useRef<Audio.Sound | null>(null);
-  const currentUrlRef = useRef<string | null>(null);
-  const currentTitleRef = useRef<string | null>(null);
-  const currentTimeRef = useRef(0);
-  const lastAutoSaveAtRef = useRef(0);
-  const isLiveStreamRef = useRef(false);
+    // TrackPlayer hooks for real-time updates
+    const { position, duration } = useProgress(500);
+    const playbackState = usePlaybackState();
+    const isPlaying = playbackState.state === State.Playing;
+    const isLiveStream = !duration || duration === 0 || !Number.isFinite(duration);
 
-  const session = useNostrSession({
-    secret,
-    onSessionStatusChange,
-  });
-  const isViewOnly = session.sessionStatus !== "active";
-  const syncRef = useRef<NostrSyncPanelHandle | null>(null);
-  const lastSessionStatusRef = useRef<SessionStatus>(session.sessionStatus);
-  const lastPlaybackStateRef = useRef<PlaybackState>(PlaybackState.NONE);
-  const lastPlaybackRateRef = useRef(1);
-  const lastReportedPositionRef = useRef(0);
+    const currentUrlRef = useRef<string | null>(null);
+    const currentTitleRef = useRef<string | null>(null);
+    const lastAutoSaveAtRef = useRef(0);
+    const isLiveStreamRef = useRef(false);
 
-  useEffect(() => {
-    isLiveStreamRef.current = isLiveStream;
-  }, [isLiveStream]);
-
-  useEffect(() => {
-    void Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-      staysActiveInBackground: true,
-      playsInSilentModeIOS: true,
-      interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-      shouldDuckAndroid: true,
-      playThroughEarpieceAndroid: false,
+    const session = useNostrSession({
+      secret,
+      onSessionStatusChange,
     });
-  }, []);
+    const isViewOnly = session.sessionStatus !== "active";
+    const syncRef = useRef<NostrSyncPanelHandle | null>(null);
+    const lastSessionStatusRef = useRef<SessionStatus>(session.sessionStatus);
 
-  useEffect(() => {
-    onSessionStatusChange?.(session.sessionStatus);
-  }, [onSessionStatusChange, session.sessionStatus]);
+    useEffect(() => {
+      isLiveStreamRef.current = isLiveStream;
+    }, [isLiveStream]);
 
-  // Media control setup lives below after callbacks are defined.
+    useEffect(() => {
+      onSessionStatusChange?.(session.sessionStatus);
+    }, [onSessionStatusChange, session.sessionStatus]);
 
-  useImperativeHandle(ref, () => ({
-    startSession: () => syncRef.current?.startSession(),
-    takeOverSession: () => syncRef.current?.takeOverSession(),
-    refreshSession: () => syncRef.current?.refreshSession(),
-    syncNow: () => syncRef.current?.syncNow(),
-    getSessionStatus: () => session.sessionStatus,
-  }));
+    useImperativeHandle(ref, () => ({
+      startSession: () => syncRef.current?.startSession(),
+      takeOverSession: () => syncRef.current?.takeOverSession(),
+      refreshSession: () => syncRef.current?.refreshSession(),
+      syncNow: () => syncRef.current?.syncNow(),
+      getSessionStatus: () => session.sessionStatus,
+    }));
 
-  const reportPlaybackState = useCallback(
-    async (state: PlaybackState, positionSeconds?: number, rate?: number) => {
-      const position =
-        typeof positionSeconds === "number" && Number.isFinite(positionSeconds)
-          ? Math.max(0, positionSeconds)
-          : 0;
-      const playbackRate =
-        typeof rate === "number" ? rate : state === PlaybackState.PLAYING ? 1 : 0;
-      if (
-        lastPlaybackStateRef.current === state &&
-        Math.abs(lastReportedPositionRef.current - position) < 1 &&
-        lastPlaybackRateRef.current === playbackRate
-      ) {
-        return;
-      }
-      lastPlaybackStateRef.current = state;
-      lastReportedPositionRef.current = position;
-      lastPlaybackRateRef.current = playbackRate;
+    const handlePlay = useCallback(async () => {
+      if (isViewOnly) return;
       try {
-        await MediaControl.updatePlaybackState(state, position, playbackRate);
-      } catch {
-        // Ignore media control errors.
+        await TrackPlayer.play();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Playback error");
       }
-    },
-    []
-  );
+    }, [isViewOnly]);
 
-  const handlePlay = useCallback(async () => {
-    if (isViewOnly) return;
-    const sound = soundRef.current;
-    if (!sound) return;
-    try {
-      await sound.playAsync();
-      await reportPlaybackState(PlaybackState.PLAYING, currentTimeRef.current, 1);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Playback error");
-    }
-  }, [isViewOnly, reportPlaybackState]);
+    const handlePause = useCallback(async () => {
+      if (isViewOnly) return;
+      try {
+        await TrackPlayer.pause();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Playback error");
+      }
+    }, [isViewOnly]);
 
-  const handlePause = useCallback(async () => {
-    if (isViewOnly) return;
-    const sound = soundRef.current;
-    if (!sound) return;
-    try {
-      await sound.pauseAsync();
-      await reportPlaybackState(PlaybackState.PAUSED, currentTimeRef.current, 0);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Playback error");
-    }
-  }, [isViewOnly, reportPlaybackState]);
-
-  const handleStop = useCallback(async () => {
-    if (isViewOnly) return;
-    const sound = soundRef.current;
-    if (!sound) return;
-    try {
-      await sound.stopAsync();
-      await sound.setPositionAsync(0);
-      currentTimeRef.current = 0;
-      setCurrentTime(0);
-      await reportPlaybackState(PlaybackState.STOPPED, 0, 0);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Playback error");
-    }
-  }, [isViewOnly, reportPlaybackState]);
-
-  const seekTo = useCallback(
-    async (targetSeconds: number) => {
-      if (!soundRef.current) return;
+    const seekTo = useCallback(async (targetSeconds: number) => {
       if (!Number.isFinite(targetSeconds)) return;
       const next = Math.max(0, targetSeconds);
       try {
-        await soundRef.current.setPositionAsync(next * 1000);
-        currentTimeRef.current = next;
-        setCurrentTime(next);
-        await reportPlaybackState(
-          isPlaying ? PlaybackState.PLAYING : PlaybackState.PAUSED,
-          next,
-          isPlaying ? 1 : 0
-        );
+        await TrackPlayer.seekTo(next);
       } catch {
-        // Ignore seek failures (e.g., unloaded sound).
+        // Ignore seek failures
       }
-    },
-    [isPlaying, reportPlaybackState]
-  );
+    }, []);
 
-  const applyVolume = useCallback(
-    async (nextVolume: number) => {
+    const applyVolume = useCallback(async (nextVolume: number) => {
       const clamped = clamp(nextVolume, 0, 1);
       setVolume(clamped);
-      if (!soundRef.current) return;
       try {
-        await soundRef.current.setVolumeAsync(clamped);
+        await TrackPlayer.setVolume(clamped);
       } catch {
-        // Ignore volume failures while loading/unloading.
+        // Ignore volume failures
       }
-    },
-    []
-  );
+    }, []);
 
-  useEffect(() => {
-    return () => {
-      if (soundRef.current) {
-        void soundRef.current.unloadAsync();
+    // Stop playback when session becomes inactive
+    useEffect(() => {
+      if (session.sessionStatus === "active") return;
+      void TrackPlayer.stop().catch(() => {});
+    }, [session.sessionStatus]);
+
+    const persistHistory = useCallback((next: HistoryEntry[]) => {
+      setHistory(next);
+      void saveHistory(next);
+    }, []);
+
+    const saveHistoryEntry = useCallback(
+      (positionToSave?: number, options?: { allowLive?: boolean }) => {
+        if (isViewOnly) return;
+        if (!currentUrlRef.current) return;
+        if (isLiveStreamRef.current && !options?.allowLive) return;
+
+        const pos = Number.isFinite(positionToSave) ? (positionToSave as number) : position;
+        const now = new Date().toISOString();
+        const entry: HistoryEntry = {
+          url: currentUrlRef.current,
+          title: currentTitleRef.current ?? undefined,
+          lastPlayedAt: now,
+          position: pos,
+        };
+
+        setHistory((prev) => {
+          const existingIndex = prev.findIndex((item) => item.url === entry.url);
+          let next: HistoryEntry[];
+          if (existingIndex >= 0) {
+            next = [entry, ...prev.filter((_, i) => i !== existingIndex)];
+          } else {
+            next = [entry, ...prev];
+          }
+          void saveHistory(next);
+          return next;
+        });
+      },
+      [position, isViewOnly]
+    );
+
+    // Auto-save every 5 seconds while playing
+    useEffect(() => {
+      if (!isPlaying || isViewOnly || isLiveStreamRef.current) return;
+      if (!currentUrlRef.current) return;
+
+      if (Date.now() - lastAutoSaveAtRef.current >= 5000) {
+        lastAutoSaveAtRef.current = Date.now();
+        saveHistoryEntry(position);
+      }
+    }, [isPlaying, isViewOnly, position, saveHistoryEntry]);
+
+    const loadUrl = useCallback(
+      async (
+        urlToLoad: string,
+        resolvedTitle?: string,
+        options?: { skipInitialSave?: boolean; startPosition?: number | null }
+      ) => {
+        if (!urlToLoad) return;
+        setLoading(true);
+        setError(null);
+
+        try {
+          // Reset the player and add the new track
+          await TrackPlayer.reset();
+
+          await TrackPlayer.add({
+            id: urlToLoad,
+            url: urlToLoad,
+            title: resolvedTitle || "Stream",
+            artist: urlToLoad,
+          });
+
+          currentUrlRef.current = urlToLoad;
+          currentTitleRef.current = resolvedTitle ?? null;
+          setNowPlayingUrl(urlToLoad);
+          setNowPlayingTitle(resolvedTitle ?? null);
+
+          // Apply current volume
+          await TrackPlayer.setVolume(volume);
+
+          // Seek to start position if provided
+          const startPosition = options?.startPosition ?? null;
+          if (startPosition !== null && Number.isFinite(startPosition) && startPosition > 0) {
+            await TrackPlayer.seekTo(startPosition);
+          }
+
+          if (!options?.skipInitialSave) {
+            saveHistoryEntry(0, { allowLive: true });
+          }
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to load audio");
+        } finally {
+          setLoading(false);
+        }
+      },
+      [saveHistoryEntry, volume]
+    );
+
+    const applyHistoryDisplay = useCallback((entry: HistoryEntry) => {
+      currentUrlRef.current = entry.url;
+      currentTitleRef.current = entry.title ?? null;
+      setNowPlayingUrl(entry.url);
+      setNowPlayingTitle(entry.title ?? null);
+    }, []);
+
+    const loadFromHistory = useCallback(
+      (entry: HistoryEntry, options?: { allowViewOnly?: boolean }) => {
+        if (!entry) return;
+        if (isViewOnly && !options?.allowViewOnly) return;
+
+        if (isViewOnly) {
+          applyHistoryDisplay(entry);
+          return;
+        }
+        const start = Number.isFinite(entry.position) ? Math.max(0, entry.position) : 0;
+
+        void loadUrl(entry.url, entry.title, {
+          skipInitialSave: true,
+          startPosition: start,
+        });
+      },
+      [applyHistoryDisplay, isViewOnly, loadUrl]
+    );
+
+    // Load history on mount
+    useEffect(() => {
+      let mounted = true;
+      (async () => {
+        const stored = await getHistory();
+        if (!mounted) return;
+        setHistory(stored);
+        if (stored[0]) {
+          applyHistoryDisplay(stored[0]);
+        }
+      })();
+
+      return () => {
+        mounted = false;
+      };
+    }, [applyHistoryDisplay]);
+
+    const loadStream = () => {
+      if (isViewOnly) return;
+      const urlToLoad = url.trim();
+      if (!urlToLoad) {
+        setError("Please enter a URL");
+        return;
+      }
+
+      const existing = history.find((item) => item.url === urlToLoad);
+      if (existing) {
+        const updated = title.trim() ? { ...existing, title: title.trim() } : existing;
+        if (updated !== existing) {
+          const next = [updated, ...history.filter((h) => h.url !== updated.url)];
+          persistHistory(next);
+        }
+        loadFromHistory(updated);
+        return;
+      }
+
+      void loadUrl(urlToLoad, title.trim() || undefined);
+    };
+
+    const togglePlayPause = async () => {
+      if (isViewOnly) return;
+      if (isPlaying) {
+        await handlePause();
+      } else {
+        await handlePlay();
       }
     };
-  }, []);
 
-  useEffect(() => {
-    if (session.sessionStatus === "active") return;
-    if (soundRef.current) {
-      const sound = soundRef.current;
-      soundRef.current = null;
-      Promise.resolve()
-        .then(() => sound.stopAsync())
-        .catch(() => {})
-        .finally(() => {
-          void sound.unloadAsync().catch(() => {});
-        });
-    }
-    setIsPlaying(false);
-    void reportPlaybackState(PlaybackState.PAUSED, 0, 0);
-  }, [reportPlaybackState, session.sessionStatus]);
+    const seekBy = async (deltaSeconds: number) => {
+      if (isViewOnly || isLiveStreamRef.current) return;
+      const next = Math.max(0, position + deltaSeconds);
+      await seekTo(next);
+    };
 
-  const persistHistory = useCallback((next: HistoryEntry[]) => {
-    setHistory(next);
-    void saveHistory(next);
-  }, []);
-
-  const saveHistoryEntry = useCallback(
-    (position?: number, options?: { allowLive?: boolean }) => {
-      if (isViewOnly) return;
-      if (!currentUrlRef.current) return;
-      if (isLiveStreamRef.current && !options?.allowLive) return;
-
-      const positionToSave = Number.isFinite(position) ? (position as number) : currentTime;
-      const now = new Date().toISOString();
-      const entry: HistoryEntry = {
-        url: currentUrlRef.current,
-        title: currentTitleRef.current ?? undefined,
-        lastPlayedAt: now,
-        position: positionToSave,
-      };
-
-      setHistory((prev) => {
-        const existingIndex = prev.findIndex((item) => item.url === entry.url);
-        let next: HistoryEntry[];
-        if (existingIndex >= 0) {
-          next = [entry, ...prev.filter((_, i) => i !== existingIndex)];
-        } else {
-          next = [entry, ...prev];
-        }
-        void saveHistory(next);
-        return next;
-      });
-    },
-    [currentTime, isViewOnly]
-  );
-
-  const onPlaybackStatusUpdate = (status: AVPlaybackStatus) => {
-    if (!status.isLoaded) {
-      if (status.error) {
-        setError(status.error);
+    // Reset auto-save timer when playback stops
+    useEffect(() => {
+      if (!isPlaying) {
+        lastAutoSaveAtRef.current = 0;
       }
-      return;
-    }
+    }, [isPlaying]);
 
-    const nextIsPlaying = status.isPlaying;
-    setIsPlaying(nextIsPlaying);
-    const nextTime = status.positionMillis / 1000;
-    currentTimeRef.current = nextTime;
-    setCurrentTime(nextTime);
-
-    if (typeof status.durationMillis === "number") {
-      setDuration(status.durationMillis / 1000);
-      setIsLiveStream(false);
-      isLiveStreamRef.current = false;
-    } else {
-      setDuration(null);
-      setIsLiveStream(true);
-      isLiveStreamRef.current = true;
-    }
-
-    if (status.didJustFinish) {
-      void reportPlaybackState(PlaybackState.STOPPED, nextTime, 0);
-    } else {
-      const desiredState = nextIsPlaying ? PlaybackState.PLAYING : PlaybackState.PAUSED;
-      if (lastPlaybackStateRef.current !== desiredState) {
-        void reportPlaybackState(desiredState, nextTime, status.rate ?? 1);
-      }
-    }
-
-    if (
-      nextIsPlaying &&
-      !isLiveStreamRef.current &&
-      Date.now() - lastAutoSaveAtRef.current >= 5000
-    ) {
-      lastAutoSaveAtRef.current = Date.now();
-      saveHistoryEntry(nextTime);
-    }
-  };
-
-  const loadUrl = useCallback(
-    async (
-      urlToLoad: string,
-      resolvedTitle?: string,
-      options?: { skipInitialSave?: boolean; startPosition?: number | null }
-    ) => {
-      if (!urlToLoad) return;
-      setLoading(true);
-      setError(null);
-
-      try {
-        if (soundRef.current) {
-          await soundRef.current.unloadAsync();
-          soundRef.current = null;
-        }
-
-        currentUrlRef.current = urlToLoad;
-        currentTitleRef.current = resolvedTitle ?? null;
-        setNowPlayingUrl(urlToLoad);
-        setNowPlayingTitle(resolvedTitle ?? null);
-
-        const { sound, status } = await Audio.Sound.createAsync(
-          { uri: urlToLoad },
-          { shouldPlay: false, volume },
-          onPlaybackStatusUpdate
-        );
-
-        soundRef.current = sound;
-
-        if (status.isLoaded && typeof status.durationMillis === "number") {
-          setDuration(status.durationMillis / 1000);
-          setIsLiveStream(false);
-          isLiveStreamRef.current = false;
-        } else {
-          setDuration(null);
-          setIsLiveStream(true);
-          isLiveStreamRef.current = true;
-        }
-
-        const startPosition = options?.startPosition ?? null;
-        const shouldSeek =
-          !isLiveStreamRef.current && startPosition !== null && Number.isFinite(startPosition);
-        const targetPosition = shouldSeek ? Math.max(0, startPosition as number) : 0;
-
-        if (shouldSeek) {
-          try {
-            await sound.setPositionAsync(targetPosition * 1000);
-          } catch {
-            // If the seek fails, we still fall back to letting the status update drive position.
-          }
-        }
-
-        currentTimeRef.current = targetPosition;
-        setCurrentTime(targetPosition);
-        void reportPlaybackState(PlaybackState.PAUSED, targetPosition, 0);
-
-        if (!options?.skipInitialSave) {
-          saveHistoryEntry(0, { allowLive: true });
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load audio");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [saveHistoryEntry, volume]
-  );
-
-  const applyHistoryDisplay = useCallback((entry: HistoryEntry) => {
-    currentUrlRef.current = entry.url;
-    currentTitleRef.current = entry.title ?? null;
-    setNowPlayingUrl(entry.url);
-    setNowPlayingTitle(entry.title ?? null);
-    setCurrentTime(Number.isFinite(entry.position) ? entry.position : 0);
-  }, []);
-
-  const loadFromHistory = useCallback(
-    (entry: HistoryEntry, options?: { allowViewOnly?: boolean }) => {
+    const handleRemoteSync = async (remoteHistory: HistoryEntry[]) => {
+      const entry = remoteHistory[0];
       if (!entry) return;
-      if (isViewOnly && !options?.allowViewOnly) return;
 
       if (isViewOnly) {
         applyHistoryDisplay(entry);
         return;
       }
-      const start = Number.isFinite(entry.position) ? Math.max(0, entry.position) : 0;
-      currentTimeRef.current = start;
-      setCurrentTime(start);
 
-      void loadUrl(entry.url, entry.title, {
-        skipInitialSave: true,
-        startPosition: start,
-      });
-    },
-    [applyHistoryDisplay, isViewOnly, loadUrl]
-  );
-
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const stored = await getHistory();
-      if (!mounted) return;
-      setHistory(stored);
-      if (stored[0]) {
-        applyHistoryDisplay(stored[0]);
-      }
-    })();
-
-    return () => {
-      mounted = false;
-    };
-  }, [applyHistoryDisplay]);
-
-  const loadStream = () => {
-    if (isViewOnly) return;
-    const urlToLoad = url.trim();
-    if (!urlToLoad) {
-      setError("Please enter a URL");
-      return;
-    }
-
-    const existing = history.find((item) => item.url === urlToLoad);
-    if (existing) {
-      const updated = title.trim() ? { ...existing, title: title.trim() } : existing;
-      if (updated !== existing) {
-        const next = [updated, ...history.filter((h) => h.url !== updated.url)];
-        persistHistory(next);
-      }
-      loadFromHistory(updated);
-      return;
-    }
-
-    void loadUrl(urlToLoad, title.trim() || undefined);
-  };
-
-  const togglePlayPause = async () => {
-    if (isViewOnly) return;
-    if (isPlaying) {
-      await handlePause();
-    } else {
-      await handlePlay();
-    }
-  };
-
-  const seekBy = async (deltaSeconds: number) => {
-    if (isViewOnly) return;
-    const sound = soundRef.current;
-    if (!sound || isLiveStreamRef.current) return;
-    const next = Math.max(0, currentTime + deltaSeconds);
-    await seekTo(next);
-  };
-
-  useEffect(() => {
-    let removeListener: (() => void) | null = null;
-
-    const setupMediaControls = async () => {
-      try {
-        await MediaControl.enableMediaControls({
-          capabilities: [
-            Command.PLAY,
-            Command.PAUSE,
-            Command.STOP,
-            Command.SEEK,
-            Command.SKIP_FORWARD,
-            Command.SKIP_BACKWARD,
-          ],
-          ios: { skipInterval: 15 },
-          android: { skipInterval: 15 },
-        });
-      } catch {
+      const currentTrack = await TrackPlayer.getActiveTrack();
+      if (currentUrlRef.current && currentUrlRef.current === entry.url && currentTrack) {
+        if (!isLiveStreamRef.current && Number.isFinite(entry.position)) {
+          const target = Math.max(0, entry.position);
+          await TrackPlayer.seekTo(target);
+        }
         return;
       }
 
-      removeListener = MediaControl.addListener((event) => {
-        if (isViewOnly) return;
-        switch (event.command) {
-          case Command.PLAY:
-            void handlePlay();
-            break;
-          case Command.PAUSE:
-            void handlePause();
-            break;
-          case Command.STOP:
-            void handleStop();
-            break;
-          case Command.SEEK: {
-            const position = event.data?.position;
-            if (typeof position === "number") {
-              void seekTo(position);
-            }
-            break;
-          }
-          case Command.SKIP_FORWARD: {
-            const interval =
-              typeof event.data?.interval === "number" ? event.data.interval : 30;
-            void seekBy(interval);
-            break;
-          }
-          case Command.SKIP_BACKWARD: {
-            const interval =
-              typeof event.data?.interval === "number" ? event.data.interval : 15;
-            void seekBy(-interval);
-            break;
-          }
-          default:
-            break;
+      loadFromHistory(entry);
+    };
+
+    // Handle session becoming active
+    useEffect(() => {
+      const prev = lastSessionStatusRef.current;
+      lastSessionStatusRef.current = session.sessionStatus;
+      if (prev !== "active" && session.sessionStatus === "active") {
+        const entry = history[0];
+        if (entry) {
+          const start = Number.isFinite(entry.position) ? Math.max(0, entry.position) : 0;
+          void loadUrl(entry.url, entry.title, { skipInitialSave: true, startPosition: start });
+        } else if (currentUrlRef.current) {
+          void loadUrl(currentUrlRef.current, currentTitleRef.current ?? undefined, {
+            skipInitialSave: true,
+            startPosition: 0,
+          });
         }
-      });
+      }
+    }, [history, loadUrl, session.sessionStatus]);
+
+    const handleClearHistory = () => {
+      if (isViewOnly) return;
+      Alert.alert("Clear history", "This cannot be undone.", [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear",
+          style: "destructive",
+          onPress: () => {
+            setHistory([]);
+            void saveHistory([]);
+          },
+        },
+      ]);
     };
-
-    void setupMediaControls();
-
-    return () => {
-      removeListener?.();
-      void MediaControl.disableMediaControls();
-    };
-  }, [handlePause, handlePlay, handleStop, isViewOnly, seekBy, seekTo]);
-
-  useEffect(() => {
-    if (!nowPlayingUrl && !nowPlayingTitle) return;
-    void MediaControl.updateMetadata({
-      title: nowPlayingTitle ?? "Stream",
-      artist: nowPlayingUrl ?? undefined,
-      duration: duration ?? undefined,
-      elapsedTime: currentTimeRef.current,
-    });
-  }, [duration, nowPlayingTitle, nowPlayingUrl]);
-
-  useEffect(() => {
-    if (!isPlaying) {
-      lastAutoSaveAtRef.current = 0;
-    }
-  }, [isPlaying]);
-
-  const handleRemoteSync = (remoteHistory: HistoryEntry[]) => {
-    const entry = remoteHistory[0];
-    if (!entry) return;
 
     if (isViewOnly) {
-      applyHistoryDisplay(entry);
-      return;
+      return (
+        <View style={styles.container}>
+          <Text style={styles.heading}>Audio Player</Text>
+          <View style={styles.card}>
+            <Text style={styles.nowPlaying}>Now Playing (View Only)</Text>
+            <Text style={styles.nowPlayingTitle}>
+              {nowPlayingTitle ?? nowPlayingUrl ?? "Nothing loaded"}
+            </Text>
+            <Text style={styles.meta}>
+              {formatTime(position)} / {formatTime(duration)} {isLiveStream ? "(Live)" : ""}
+            </Text>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.nowPlaying}>History</Text>
+            <ScrollView style={styles.historyList}>
+              {history.length === 0 ? (
+                <Text style={styles.meta}>No history yet.</Text>
+              ) : (
+                history.map((entry) => (
+                  <View key={entry.url} style={styles.historyItem}>
+                    <Text style={styles.historyTitle}>{entry.title ?? entry.url}</Text>
+                    <Text style={styles.meta}>{formatTime(entry.position)}</Text>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+          </View>
+
+          <NostrSyncPanel
+            ref={syncRef}
+            secret={secret}
+            history={history}
+            session={session}
+            onHistoryLoaded={(merged) => {
+              setHistory(merged);
+              void saveHistory(merged);
+            }}
+            onRemoteSync={handleRemoteSync}
+            onTakeOver={handleRemoteSync}
+          />
+        </View>
+      );
     }
 
-    if (currentUrlRef.current && currentUrlRef.current === entry.url && soundRef.current) {
-      if (!isLiveStreamRef.current && Number.isFinite(entry.position)) {
-        const target = Math.max(0, entry.position);
-        void soundRef.current.setPositionAsync(target * 1000).catch(() => {});
-        currentTimeRef.current = target;
-        setCurrentTime(target);
-      }
-      return;
-    }
-
-    loadFromHistory(entry);
-  };
-
-  useEffect(() => {
-    const prev = lastSessionStatusRef.current;
-    lastSessionStatusRef.current = session.sessionStatus;
-    if (prev !== "active" && session.sessionStatus === "active") {
-      const entry = history[0];
-      if (entry) {
-        const start = Number.isFinite(entry.position) ? Math.max(0, entry.position) : 0;
-        void loadUrl(entry.url, entry.title, { skipInitialSave: true, startPosition: start });
-      } else if (currentUrlRef.current) {
-        const start = Math.max(0, currentTimeRef.current);
-        void loadUrl(currentUrlRef.current, currentTitleRef.current ?? undefined, {
-          skipInitialSave: true,
-          startPosition: start,
-        });
-      }
-    }
-  }, [currentTime, history, loadUrl, session.sessionStatus]);
-
-  const handleClearHistory = () => {
-    if (isViewOnly) return;
-    Alert.alert("Clear history", "This cannot be undone.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Clear",
-        style: "destructive",
-        onPress: () => {
-          setHistory([]);
-          void saveHistory([]);
-        },
-      },
-    ]);
-  };
-
-  if (isViewOnly) {
     return (
       <View style={styles.container}>
         <Text style={styles.heading}>Audio Player</Text>
+
         <View style={styles.card}>
-          <Text style={styles.nowPlaying}>Now Playing (View Only)</Text>
-          <Text style={styles.nowPlayingTitle}>
-            {nowPlayingTitle ?? nowPlayingUrl ?? "Nothing loaded"}
-          </Text>
-          <Text style={styles.meta}>
-            {formatTime(currentTime)} / {formatTime(duration)} {isLiveStream ? "(Live)" : ""}
-          </Text>
+          <Text style={styles.label}>Stream URL</Text>
+          <TextInput
+            style={styles.input}
+            value={url}
+            onChangeText={setUrl}
+            autoCapitalize="none"
+            autoCorrect={false}
+            placeholder="https://..."
+            placeholderTextColor="#6B7280"
+            editable={!isViewOnly}
+          />
+          <Text style={styles.label}>Title (optional)</Text>
+          <TextInput
+            style={styles.input}
+            value={title}
+            onChangeText={setTitle}
+            placeholder="My playlist"
+            placeholderTextColor="#6B7280"
+            editable={!isViewOnly}
+          />
+          <Pressable
+            style={[styles.primaryButton, isViewOnly && styles.buttonDisabled]}
+            onPress={loadStream}
+            disabled={isViewOnly}
+          >
+            <Text style={styles.primaryButtonText}>Load</Text>
+          </Pressable>
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+          {loading ? <ActivityIndicator color="#60A5FA" /> : null}
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.nowPlaying}>History</Text>
+          <Text style={styles.nowPlaying}>Now Playing</Text>
+          <Text style={styles.nowPlayingTitle}>
+            {nowPlayingTitle ?? nowPlayingUrl ?? "Nothing loaded"}
+          </Text>
+          <View style={styles.seekRow}>
+            <Text style={styles.meta}>
+              {formatTime(isScrubbing ? scrubTime : position)}
+            </Text>
+            <Text style={styles.meta}>{isLiveStream ? "Live" : formatTime(duration)}</Text>
+          </View>
+          <View
+            style={[
+              styles.seekBar,
+              (isViewOnly || isLiveStream || !duration) && styles.seekBarDisabled,
+            ]}
+            onLayout={(event) => setSeekBarWidth(event.nativeEvent.layout.width)}
+            onStartShouldSetResponder={() => !isViewOnly && !isLiveStream && !!duration && duration > 0}
+            onResponderGrant={(event) => {
+              if (isViewOnly || isLiveStream || !duration || seekBarWidth === 0) return;
+              const ratio = clamp(event.nativeEvent.locationX / seekBarWidth, 0, 1);
+              const target = ratio * duration;
+              setIsScrubbing(true);
+              setScrubTime(target);
+            }}
+            onResponderMove={(event) => {
+              if (!isScrubbing || isViewOnly || isLiveStream || !duration || seekBarWidth === 0)
+                return;
+              const ratio = clamp(event.nativeEvent.locationX / seekBarWidth, 0, 1);
+              setScrubTime(ratio * duration);
+            }}
+            onResponderRelease={async () => {
+              if (!isScrubbing || isViewOnly || isLiveStream || !duration) {
+                setIsScrubbing(false);
+                return;
+              }
+              setIsScrubbing(false);
+              await TrackPlayer.seekTo(scrubTime);
+            }}
+            onResponderTerminate={() => {
+              setIsScrubbing(false);
+            }}
+          >
+            <View style={styles.seekTrack} />
+            <View
+              style={[
+                styles.seekProgress,
+                {
+                  width: `${clamp(
+                    duration ? (isScrubbing ? scrubTime : position) / duration : 0,
+                    0,
+                    1
+                  ) * 100}%`,
+                },
+              ]}
+            />
+            <View
+              style={[
+                styles.seekThumb,
+                {
+                  left: `${clamp(
+                    duration ? (isScrubbing ? scrubTime : position) / duration : 0,
+                    0,
+                    1
+                  ) * 100}%`,
+                },
+              ]}
+            />
+          </View>
+          <View style={[styles.row, styles.rowCentered]}>
+            <Pressable
+              style={[styles.secondaryButton, isViewOnly && styles.buttonDisabled]}
+              onPress={() => void seekBy(-15)}
+              disabled={isViewOnly}
+            >
+              <Text style={styles.secondaryButtonText}>-15s</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.primaryButton, isViewOnly && styles.buttonDisabled]}
+              onPress={togglePlayPause}
+              disabled={isViewOnly}
+            >
+              <MaterialIcons
+                name={isPlaying ? "pause" : "play-arrow"}
+                size={26}
+                color="#F9FAFB"
+              />
+            </Pressable>
+            <Pressable
+              style={[styles.secondaryButton, isViewOnly && styles.buttonDisabled]}
+              onPress={() => void seekBy(30)}
+              disabled={isViewOnly}
+            >
+              <Text style={styles.secondaryButtonText}>+30s</Text>
+            </Pressable>
+          </View>
+          <View style={styles.volumeRow}>
+            <Text style={styles.meta}>Volume</Text>
+            <Text style={styles.meta}>{Math.round(volume * 100)}%</Text>
+          </View>
+          <View
+            style={[styles.volumeBar, isViewOnly && styles.seekBarDisabled]}
+            onLayout={(event) => setVolumeBarWidth(event.nativeEvent.layout.width)}
+            onStartShouldSetResponder={() => !isViewOnly}
+            onResponderGrant={(event) => {
+              if (isViewOnly || volumeBarWidth === 0) return;
+              const ratio = clamp(event.nativeEvent.locationX / volumeBarWidth, 0, 1);
+              void applyVolume(ratio);
+            }}
+            onResponderMove={(event) => {
+              if (isViewOnly || volumeBarWidth === 0) return;
+              const ratio = clamp(event.nativeEvent.locationX / volumeBarWidth, 0, 1);
+              void applyVolume(ratio);
+            }}
+          >
+            <View style={styles.seekTrack} />
+            <View style={[styles.seekProgress, { width: `${volume * 100}%` }]} />
+            <View style={[styles.seekThumb, { left: `${volume * 100}%` }]} />
+          </View>
+        </View>
+
+        <View style={styles.card}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.nowPlaying}>History</Text>
+            {history.length > 0 ? (
+              <Pressable onPress={handleClearHistory} disabled={isViewOnly}>
+                <Text style={styles.clear}>Clear</Text>
+              </Pressable>
+            ) : null}
+          </View>
           <ScrollView style={styles.historyList}>
             {history.length === 0 ? (
               <Text style={styles.meta}>No history yet.</Text>
             ) : (
               history.map((entry) => (
-                <View key={entry.url} style={styles.historyItem}>
+                <Pressable
+                  key={entry.url}
+                  style={styles.historyItem}
+                  onPress={() => loadFromHistory(entry)}
+                  disabled={isViewOnly}
+                >
                   <Text style={styles.historyTitle}>{entry.title ?? entry.url}</Text>
                   <Text style={styles.meta}>{formatTime(entry.position)}</Text>
-                </View>
+                </Pressable>
               ))
             )}
           </ScrollView>
@@ -647,207 +622,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         />
       </View>
     );
-  }
-
-  return (
-    <View style={styles.container}>
-      <Text style={styles.heading}>Audio Player</Text>
-
-      <View style={styles.card}>
-        <Text style={styles.label}>Stream URL</Text>
-        <TextInput
-          style={styles.input}
-          value={url}
-          onChangeText={setUrl}
-          autoCapitalize="none"
-          autoCorrect={false}
-          placeholder="https://..."
-          placeholderTextColor="#6B7280"
-          editable={!isViewOnly}
-        />
-        <Text style={styles.label}>Title (optional)</Text>
-        <TextInput
-          style={styles.input}
-          value={title}
-          onChangeText={setTitle}
-          placeholder="My playlist"
-          placeholderTextColor="#6B7280"
-          editable={!isViewOnly}
-        />
-        <Pressable
-          style={[styles.primaryButton, isViewOnly && styles.buttonDisabled]}
-          onPress={loadStream}
-          disabled={isViewOnly}
-        >
-          <Text style={styles.primaryButtonText}>Load</Text>
-        </Pressable>
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-        {loading ? <ActivityIndicator color="#60A5FA" /> : null}
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.nowPlaying}>Now Playing</Text>
-        <Text style={styles.nowPlayingTitle}>
-          {nowPlayingTitle ?? nowPlayingUrl ?? "Nothing loaded"}
-        </Text>
-        <View style={styles.seekRow}>
-          <Text style={styles.meta}>
-            {formatTime(isScrubbing ? scrubTime : currentTime)}
-          </Text>
-          <Text style={styles.meta}>{isLiveStream ? "Live" : formatTime(duration)}</Text>
-        </View>
-        <View
-          style={[
-            styles.seekBar,
-            (isViewOnly || isLiveStream || !duration) && styles.seekBarDisabled,
-          ]}
-          onLayout={(event) => setSeekBarWidth(event.nativeEvent.layout.width)}
-          onStartShouldSetResponder={() => !isViewOnly && !isLiveStream && !!duration}
-          onResponderGrant={(event) => {
-            if (isViewOnly || isLiveStream || !duration || seekBarWidth === 0) return;
-            const ratio = clamp(event.nativeEvent.locationX / seekBarWidth, 0, 1);
-            const target = ratio * duration;
-            setIsScrubbing(true);
-            setScrubTime(target);
-          }}
-          onResponderMove={(event) => {
-            if (!isScrubbing || isViewOnly || isLiveStream || !duration || seekBarWidth === 0)
-              return;
-            const ratio = clamp(event.nativeEvent.locationX / seekBarWidth, 0, 1);
-            setScrubTime(ratio * duration);
-          }}
-          onResponderRelease={() => {
-            if (!isScrubbing || isViewOnly || isLiveStream || !duration) {
-              setIsScrubbing(false);
-              return;
-            }
-            setIsScrubbing(false);
-            void seekTo(scrubTime);
-          }}
-          onResponderTerminate={() => {
-            setIsScrubbing(false);
-          }}
-        >
-          <View style={styles.seekTrack} />
-          <View
-            style={[
-              styles.seekProgress,
-              {
-                width: `${clamp(
-                  duration ? (isScrubbing ? scrubTime : currentTime) / duration : 0,
-                  0,
-                  1
-                ) * 100}%`,
-              },
-            ]}
-          />
-          <View
-            style={[
-              styles.seekThumb,
-              {
-                left: `${clamp(
-                  duration ? (isScrubbing ? scrubTime : currentTime) / duration : 0,
-                  0,
-                  1
-                ) * 100}%`,
-              },
-            ]}
-          />
-        </View>
-        <View style={[styles.row, styles.rowCentered]}>
-          <Pressable
-            style={[styles.secondaryButton, isViewOnly && styles.buttonDisabled]}
-            onPress={() => void seekBy(-15)}
-            disabled={isViewOnly}
-          >
-            <Text style={styles.secondaryButtonText}>-15s</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.primaryButton, isViewOnly && styles.buttonDisabled]}
-            onPress={togglePlayPause}
-            disabled={isViewOnly}
-          >
-            <MaterialIcons
-              name={isPlaying ? "pause" : "play-arrow"}
-              size={26}
-              color="#F9FAFB"
-            />
-          </Pressable>
-          <Pressable
-            style={[styles.secondaryButton, isViewOnly && styles.buttonDisabled]}
-            onPress={() => void seekBy(30)}
-            disabled={isViewOnly}
-          >
-            <Text style={styles.secondaryButtonText}>+30s</Text>
-          </Pressable>
-        </View>
-        <View style={styles.volumeRow}>
-          <Text style={styles.meta}>Volume</Text>
-          <Text style={styles.meta}>{Math.round(volume * 100)}%</Text>
-        </View>
-        <View
-          style={[styles.volumeBar, isViewOnly && styles.seekBarDisabled]}
-          onLayout={(event) => setVolumeBarWidth(event.nativeEvent.layout.width)}
-          onStartShouldSetResponder={() => !isViewOnly}
-          onResponderGrant={(event) => {
-            if (isViewOnly || volumeBarWidth === 0) return;
-            const ratio = clamp(event.nativeEvent.locationX / volumeBarWidth, 0, 1);
-            void applyVolume(ratio);
-          }}
-          onResponderMove={(event) => {
-            if (isViewOnly || volumeBarWidth === 0) return;
-            const ratio = clamp(event.nativeEvent.locationX / volumeBarWidth, 0, 1);
-            void applyVolume(ratio);
-          }}
-        >
-          <View style={styles.seekTrack} />
-          <View style={[styles.seekProgress, { width: `${volume * 100}%` }]} />
-          <View style={[styles.seekThumb, { left: `${volume * 100}%` }]} />
-        </View>
-      </View>
-
-      <View style={styles.card}>
-        <View style={styles.rowBetween}>
-          <Text style={styles.nowPlaying}>History</Text>
-          {history.length > 0 ? (
-            <Pressable onPress={handleClearHistory} disabled={isViewOnly}>
-              <Text style={styles.clear}>Clear</Text>
-            </Pressable>
-          ) : null}
-        </View>
-        <ScrollView style={styles.historyList}>
-          {history.length === 0 ? (
-            <Text style={styles.meta}>No history yet.</Text>
-          ) : (
-            history.map((entry) => (
-              <Pressable
-                key={entry.url}
-                style={styles.historyItem}
-                onPress={() => loadFromHistory(entry)}
-                disabled={isViewOnly}
-              >
-                <Text style={styles.historyTitle}>{entry.title ?? entry.url}</Text>
-                <Text style={styles.meta}>{formatTime(entry.position)}</Text>
-              </Pressable>
-            ))
-          )}
-        </ScrollView>
-      </View>
-
-      <NostrSyncPanel
-        ref={syncRef}
-        secret={secret}
-        history={history}
-        session={session}
-        onHistoryLoaded={(merged) => {
-          setHistory(merged);
-          void saveHistory(merged);
-        }}
-        onRemoteSync={handleRemoteSync}
-        onTakeOver={handleRemoteSync}
-      />
-    </View>
-  );
   }
 );
 
@@ -998,3 +772,5 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
 });
+
+AudioPlayer.displayName = "AudioPlayer";
