@@ -3,20 +3,52 @@
 A focused iOS audio player built with Expo. Stream audio URLs, keep a local listening history, and optionally sync history across devices using a 16-character secret over Nostr relays.
 
 ## Features
-- Stream audio from a URL with play/pause and ±15s seek.
-- Keeps a local history with last position and quick resume.
+- Stream audio from a URL with play/pause, seek bar, and ±15s/+30s skips.
+- Volume control and time display in hh:mm:ss.
+- Local history with last position and quick resume.
 - Nostr-based history sync using a shared secret and session control (start/takeover/sync).
 - View-only mode when another session is active.
 
 ## Requirements
 - Node.js + npm
-- Xcode (for iOS simulator) or a physical iOS device
+- Xcode (for iOS simulator or device builds)
+- An Apple ID signed into Xcode for device signing
 
-## Run
+## Install
 ```bash
 npm install
+```
+
+## Run on iOS Simulator (fastest)
+```bash
 npx expo start --ios
 ```
+
+## Run on a real iOS device (no App Store)
+1) Generate the native iOS project once:
+```bash
+npx expo prebuild -p ios
+```
+
+2) Open the project in Xcode:
+```bash
+open ios/audioplayer-native.xcworkspace
+```
+
+3) In Xcode:
+- Select your device in the toolbar.
+- Set your Team under **Signing & Capabilities**.
+- Click **Run**.
+
+## Build a release IPA (local)
+```bash
+# Generates a release build using Xcode
+npx expo prebuild -p ios
+open ios/audioplayer-native.xcworkspace
+```
+Then in Xcode:
+- **Product > Archive**
+- Distribute via Ad Hoc/TestFlight as needed.
 
 ## App flow
 - Open the app and enter a 16-character secret (or generate a new one).
