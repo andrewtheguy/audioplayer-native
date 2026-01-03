@@ -68,6 +68,7 @@ export function useNostrSync({
   const isLocalChangeRef = useRef(false);
   const pendingPublishRef = useRef(false);
   const latestTimestampRef = useRef(0);
+  const dirtyRef = useRef(false);
 
   useEffect(() => {
     historyRef.current = history;
@@ -78,6 +79,7 @@ export function useNostrSync({
     ignoreRemoteUntilRef.current = ignoreRemoteUntil;
     setSessionStatusRef.current = setSessionStatus;
     setSessionNoticeRef.current = setSessionNotice;
+    dirtyRef.current = true;
   }, [
     history,
     onHistoryLoaded,
@@ -107,16 +109,20 @@ export function useNostrSync({
       const { signal } = controller;
       try {
         pendingPublishRef.current = true;
+        isLocalChangeRef.current = true;
         const keys = await deriveNostrKeys(currentSecret, signal);
         await saveHistoryToNostr(historyToSave, keys.privateKey, keys.publicKey, sessionId, signal);
+        latestTimestampRef.current = Date.now();
         setStatus("synced");
         setMessage(`Saved ${historyToSave.length} entries`);
+        dirtyRef.current = false;
       } catch (err) {
         if (!options?.silent) {
           setStatus("error");
           setMessage(err instanceof Error ? err.message : "Failed to save history");
         }
       } finally {
+        isLocalChangeRef.current = false;
         pendingPublishRef.current = false;
       }
     },
@@ -204,6 +210,12 @@ export function useNostrSync({
           } else {
             setStatus("synced");
             setMessage("No synced history found.");
+            if (isTakeOver || sessionStatusRef.current === "active") {
+              sessionStatusRef.current = "active";
+              setSessionStatusRef.current("active");
+              setSessionNoticeRef.current(null);
+              void performSave(currentSecret, historyRef.current, { allowStale: true });
+            }
           }
         } catch (err) {
           setStatus("error");
@@ -278,11 +290,13 @@ export function useNostrSync({
           keys.publicKey,
           keys.privateKey,
           (payload: HistoryPayload) => {
-            if (isLocalChangeRef.current) return;
-            if (Date.now() < ignoreRemoteUntilRef.current) return;
+            if (payload.sessionId && payload.sessionId === sessionId) return;
             if (payload.timestamp <= latestTimestampRef.current) return;
 
             latestTimestampRef.current = payload.timestamp;
+            if (Date.now() < ignoreRemoteUntilRef.current) return;
+            if (isLocalChangeRef.current) return;
+
             if (payload.sessionId && payload.sessionId !== sessionId) {
               if (sessionStatusRef.current === "active") {
                 sessionStatusRef.current = "stale";
