@@ -1,11 +1,11 @@
 import AVFoundation
 import MediaPlayer
+import MobileVLCKit
 import React
 
 @objc(HLSPlayerModule)
-class HLSPlayerModule: RCTEventEmitter {
-  private var player: AVPlayer?
-  private var timeObserver: Any?
+class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
+  private var player: VLCMediaPlayer?
   private var forwardInterval: Double = 30
   private var backwardInterval: Double = 15
   private var isInitialized = false
@@ -58,18 +58,16 @@ class HLSPlayerModule: RCTEventEmitter {
     }
 
     initialize()
-    removeTimeObserver()
 
-    let playerItem = AVPlayerItem(url: url)
-    player = AVPlayer(playerItem: playerItem)
-    player?.automaticallyWaitsToMinimizeStalling = true
-
-    addTimeObserver()
+    let mediaPlayer = VLCMediaPlayer()
+    mediaPlayer.delegate = self
+    mediaPlayer.media = VLCMedia(url: url)
 
     if let start = startPosition?.doubleValue, start > 0 {
-      seekTo(NSNumber(value: start), resolver: { _ in }, rejecter: { _, _, _ in })
+      mediaPlayer.media?.addOption(":start-time=\(start)")
     }
 
+    player = mediaPlayer
     updateNowPlaying(title: title ?? "Stream", url: urlString, duration: currentDuration())
     resolver(nil)
   }
@@ -93,7 +91,7 @@ class HLSPlayerModule: RCTEventEmitter {
 
   @objc
   func stop(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
-    player?.pause()
+    player?.stop()
     seekTo(NSNumber(value: 0), resolver: { _ in }, rejecter: { _, _, _ in })
     updateNowPlayingState(isPlaying: false)
     sendPlaybackState("stopped")
@@ -102,9 +100,8 @@ class HLSPlayerModule: RCTEventEmitter {
 
   @objc
   func reset(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
-    player?.pause()
+    player?.stop()
     player = nil
-    removeTimeObserver()
     updateNowPlayingState(isPlaying: false)
     sendPlaybackState("none")
     resolve(nil)
@@ -117,11 +114,10 @@ class HLSPlayerModule: RCTEventEmitter {
       return
     }
 
-    let target = CMTime(seconds: position.doubleValue, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
-    player.seek(to: target) { _ in
-      self.updateNowPlayingProgress()
-      resolve(nil)
-    }
+    let millis = Int32(max(0, position.doubleValue * 1000))
+    player.time = VLCTime(int: millis)
+    updateNowPlayingProgress()
+    resolve(nil)
   }
 
   @objc
@@ -186,7 +182,7 @@ class HLSPlayerModule: RCTEventEmitter {
 
     commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
       guard let strongSelf = self else { return .commandFailed }
-      if strongSelf.player?.timeControlStatus == .playing {
+      if strongSelf.player?.isPlaying == true {
         strongSelf.handleRemotePause()
       } else {
         strongSelf.handleRemotePlay()
@@ -281,39 +277,15 @@ class HLSPlayerModule: RCTEventEmitter {
     sendEvent(withName: "remote-seek", body: ["position": target])
   }
 
-  private func addTimeObserver() {
-    guard let player = player else { return }
-    timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: CMTimeScale(NSEC_PER_SEC)), queue: .main) { [weak self] time in
-      guard let strongSelf = self else { return }
-      let position = time.seconds
-      let duration = strongSelf.currentDuration()
-      strongSelf.sendEvent(withName: "playback-progress", body: [
-        "position": position,
-        "duration": duration,
-      ])
-      strongSelf.updateNowPlayingProgress()
-    }
-  }
-
-  private func removeTimeObserver() {
-    if let observer = timeObserver, let player = player {
-      player.removeTimeObserver(observer)
-    }
-    timeObserver = nil
-  }
-
   private func currentPosition() -> Double {
-    return player?.currentTime().seconds ?? 0
+    guard let time = player?.time else { return 0 }
+    return Double(time.intValue) / 1000.0
   }
 
   private func currentDuration() -> Double {
-    guard let duration = player?.currentItem?.duration.seconds else {
-      return 0
-    }
-    if duration.isFinite {
-      return duration
-    }
-    return 0
+    guard let length = player?.media?.length else { return 0 }
+    let value = Double(length.intValue) / 1000.0
+    return value.isFinite ? value : 0
   }
 
   private func updateNowPlaying(title: String, artist: String = "", url: String = "", duration: Double? = nil) {
@@ -326,7 +298,7 @@ class HLSPlayerModule: RCTEventEmitter {
     }
 
     nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentPosition()
-    nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = player?.timeControlStatus == .playing ? 1.0 : 0.0
+    nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = player?.isPlaying == true ? 1.0 : 0.0
     MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
   }
 
@@ -341,6 +313,7 @@ class HLSPlayerModule: RCTEventEmitter {
     if currentDuration() > 0 {
       nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = currentDuration()
     }
+    nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = player?.isPlaying == true ? 1.0 : 0.0
     MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
   }
 
@@ -348,7 +321,41 @@ class HLSPlayerModule: RCTEventEmitter {
     sendEvent(withName: "playback-state", body: ["state": state])
   }
 
-  deinit {
-    removeTimeObserver()
+  private func mapState(_ state: VLCMediaPlayerState) -> String {
+    switch state {
+    case .playing:
+      return "playing"
+    case .paused:
+      return "paused"
+    case .stopped, .ended:
+      return "stopped"
+    case .buffering, .opening:
+      return "buffering"
+    case .error:
+      return "error"
+    default:
+      return "none"
+    }
+  }
+
+  func mediaPlayerStateChanged(_ aNotification: Notification) {
+    guard let state = player?.state else { return }
+    let mapped = mapState(state)
+    sendPlaybackState(mapped)
+    updateNowPlayingState(isPlaying: state == .playing)
+
+    if state == .error {
+      sendEvent(withName: "playback-error", body: ["message": "Playback failed"])
+    }
+  }
+
+  func mediaPlayerTimeChanged(_ aNotification: Notification) {
+    let position = currentPosition()
+    let duration = currentDuration()
+    sendEvent(withName: "playback-progress", body: [
+      "position": position,
+      "duration": duration,
+    ])
+    updateNowPlayingProgress()
   }
 }
