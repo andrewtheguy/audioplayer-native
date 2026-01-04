@@ -77,8 +77,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const lastProgressPosRef = useRef(0);
     const [nowTick, setNowTick] = useState(Date.now());
 
-    // TrackPlayer hooks for real-time updates (1 second interval to reduce re-renders)
-    const { position, duration } = useProgress(500);
+    // TrackPlayer hooks for real-time updates
+    const { position, duration } = useProgress(200);
     const playbackState = usePlaybackState();
     const isPlaying = playbackState.state === State.Playing;
     const isLiveStream = !duration || duration === 0 || !Number.isFinite(duration);
@@ -342,7 +342,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     // Lightweight timer to drive optimistic position updates
     useEffect(() => {
-      const id = setInterval(() => setNowTick(Date.now()), 200);
+      const id = setInterval(() => setNowTick(Date.now()), 100);
       return () => clearInterval(id);
     }, []);
 
