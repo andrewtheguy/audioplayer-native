@@ -146,10 +146,17 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       }
     }, []);
 
-    // Stop playback when session becomes inactive
+    // Stop and clear the player when session becomes inactive to avoid background audio
     useEffect(() => {
       if (session.sessionStatus === "active") return;
-      void TrackPlayer.stop().catch(() => {});
+      (async () => {
+        try {
+          await TrackPlayer.stop();
+          await TrackPlayer.reset();
+        } catch {
+          // Ignore cleanup failures
+        }
+      })();
     }, [session.sessionStatus]);
 
     const persistHistory = useCallback((next: HistoryEntry[]) => {
