@@ -14,11 +14,20 @@ import TrackPlayer, {
 // Register the playback service (must be done at module level)
 TrackPlayer.registerPlaybackService(() => PlaybackService);
 
+let playerInitialized = false;
+
 function isAlreadyInitializedError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   if (!("message" in error)) return false;
   const message = String((error as { message?: unknown }).message ?? "").toLowerCase();
   return message.includes("already") && (message.includes("initialized") || message.includes("setup"));
+}
+
+function isNotInitializedError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  if (!("message" in error)) return false;
+  const message = String((error as { message?: unknown }).message ?? "").toLowerCase();
+  return message.includes("not initialized") || message.includes("setupplayer first");
 }
 
 async function configurePlayerOptions(): Promise<void> {
@@ -41,6 +50,8 @@ async function configurePlayerOptions(): Promise<void> {
 }
 
 async function teardownPlayer(): Promise<void> {
+  if (!playerInitialized) return;
+
   await TrackPlayer.stop().catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     console.warn("TrackPlayer stop failed during teardown.", { message, error });
@@ -58,6 +69,9 @@ async function setupPlayer(): Promise<boolean> {
   try {
     playbackState = await TrackPlayer.getPlaybackState();
   } catch (stateError) {
+    if (isNotInitializedError(stateError)) {
+      playbackState = null;
+    } else {
     const message = stateError instanceof Error ? stateError.message : String(stateError);
     const stack = stateError instanceof Error ? stateError.stack : undefined;
     console.warn("TrackPlayer getPlaybackState failed; assuming not initialized.", {
@@ -65,11 +79,13 @@ async function setupPlayer(): Promise<boolean> {
       stack,
       error: stateError,
     });
+    }
   }
 
   if (playbackState?.state !== undefined) {
     try {
       await configurePlayerOptions();
+      playerInitialized = true;
       return true;
     } catch (optionsError) {
       const message = optionsError instanceof Error ? optionsError.message : String(optionsError);
@@ -84,7 +100,9 @@ async function setupPlayer(): Promise<boolean> {
   }
 
   try {
-    await teardownPlayer();
+    if (playbackState?.state !== undefined) {
+      await teardownPlayer();
+    }
 
     await TrackPlayer.setupPlayer({
       iosCategory: IOSCategory.Playback,
@@ -102,11 +120,13 @@ async function setupPlayer(): Promise<boolean> {
       backBuffer: 120,
     });
     await configurePlayerOptions();
+    playerInitialized = true;
     return true;
   } catch (error) {
     if (isAlreadyInitializedError(error)) {
       try {
         await configurePlayerOptions();
+        playerInitialized = true;
         return true;
       } catch (optionsError) {
         const message = optionsError instanceof Error ? optionsError.message : String(optionsError);
