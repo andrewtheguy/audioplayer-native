@@ -5,7 +5,15 @@ import type { HistoryEntry } from "@/lib/history";
 import { getHistory, saveHistory } from "@/lib/history";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import Slider from "@react-native-community/slider";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -63,9 +71,14 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     // Scrubbing state - when true, we show scrub position instead of actual position
     const [isScrubbing, setIsScrubbing] = useState(false);
     const [scrubPosition, setScrubPosition] = useState(0);
+    const [pendingSeekPosition, setPendingSeekPosition] = useState<number | null>(null);
+    const lastSeekAtRef = useRef(0);
+    const lastProgressAtRef = useRef(Date.now());
+    const lastProgressPosRef = useRef(0);
+    const [nowTick, setNowTick] = useState(Date.now());
 
     // TrackPlayer hooks for real-time updates (1 second interval to reduce re-renders)
-    const { position, duration } = useProgress(1000);
+    const { position, duration } = useProgress(500);
     const playbackState = usePlaybackState();
     const isPlaying = playbackState.state === State.Playing;
     const isLiveStream = !duration || duration === 0 || !Number.isFinite(duration);
@@ -309,6 +322,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const seekBy = async (deltaSeconds: number) => {
       if (isViewOnly || isLiveStreamRef.current) return;
       const next = Math.max(0, position + deltaSeconds);
+      setPendingSeekPosition(next);
+      lastSeekAtRef.current = Date.now();
       await seekTo(next);
     };
 
@@ -318,6 +333,18 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         lastAutoSaveAtRef.current = 0;
       }
     }, [isPlaying]);
+
+    // Track last progress sample to allow optimistic UI updates between TrackPlayer ticks
+    useEffect(() => {
+      lastProgressPosRef.current = position;
+      lastProgressAtRef.current = Date.now();
+    }, [position]);
+
+    // Lightweight timer to drive optimistic position updates
+    useEffect(() => {
+      const id = setInterval(() => setNowTick(Date.now()), 200);
+      return () => clearInterval(id);
+    }, []);
 
     const handleRemoteSync = async (remoteHistory: HistoryEntry[]) => {
       const entry = remoteHistory[0];
@@ -425,19 +452,49 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const handleSeekStart = () => {
       setIsScrubbing(true);
       setScrubPosition(position);
+      setPendingSeekPosition(null);
     };
 
     const handleSeekChange = (value: number) => {
       setScrubPosition(value);
+      setPendingSeekPosition(value);
+      lastSeekAtRef.current = Date.now();
     };
 
     const handleSeekComplete = async (value: number) => {
-      setIsScrubbing(false);
+      setScrubPosition(value);
+      setPendingSeekPosition(value);
+      lastSeekAtRef.current = Date.now();
       await seekTo(value);
+      setIsScrubbing(false);
     };
 
-    // Display position (scrub position while dragging, actual position otherwise)
-    const displayPosition = isScrubbing ? scrubPosition : position;
+    // Keep showing target position until TrackPlayer reports the new position to avoid UI snap-back
+    useEffect(() => {
+      if (pendingSeekPosition === null) return;
+      const age = Date.now() - lastSeekAtRef.current;
+      if (Math.abs(position - pendingSeekPosition) < 0.25 || age > 2000) {
+        setPendingSeekPosition(null);
+      }
+    }, [pendingSeekPosition, position]);
+
+    const optimisticPosition = useMemo(() => {
+      // Recompute every timer tick for smoother UI
+      void nowTick;
+
+      if (isScrubbing) return scrubPosition;
+      if (pendingSeekPosition !== null) return pendingSeekPosition;
+      if (!isPlaying) return position;
+
+      const elapsedMs = Date.now() - lastProgressAtRef.current;
+      const elapsedSec = Math.max(0, elapsedMs) / 1000;
+      const estimate = lastProgressPosRef.current + elapsedSec;
+      const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : Number.POSITIVE_INFINITY;
+      return Math.min(estimate, safeDuration);
+    }, [duration, isPlaying, isScrubbing, nowTick, pendingSeekPosition, position, scrubPosition]);
+
+    // Display position (scrub, then pending seek preview/optimistic, then live position)
+    const displayPosition = optimisticPosition;
 
     if (isViewOnly) {
       return (
