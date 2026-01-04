@@ -1,18 +1,18 @@
 import { AudioPlayer, type AudioPlayerHandle } from "@/components/AudioPlayer";
 import type { SessionStatus } from "@/hooks/useNostrSession";
 import { clearSessionSecret, getSavedSessionSecret } from "@/lib/history";
+import * as TrackPlayer from "@/services/HlsTrackPlayer";
 import { Redirect, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
+    ActivityIndicator,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import TrackPlayer from "react-native-track-player";
 
 export default function PlayerScreen() {
   const router = useRouter();
