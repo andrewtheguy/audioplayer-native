@@ -76,6 +76,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const lastProgressAtRef = useRef(Date.now());
     const lastProgressPosRef = useRef(0);
     const [nowTick, setNowTick] = useState(Date.now());
+    const [viewOnlyPosition, setViewOnlyPosition] = useState<number | null>(null);
 
     // TrackPlayer hooks for real-time updates
     const { position, duration } = useProgress(200);
@@ -252,12 +253,18 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       [saveHistoryEntry, volume]
     );
 
-    const applyHistoryDisplay = useCallback((entry: HistoryEntry) => {
-      currentUrlRef.current = entry.url;
-      currentTitleRef.current = entry.title ?? null;
-      setNowPlayingUrl(entry.url);
-      setNowPlayingTitle(entry.title ?? null);
-    }, []);
+    const applyHistoryDisplay = useCallback(
+      (entry: HistoryEntry) => {
+        currentUrlRef.current = entry.url;
+        currentTitleRef.current = entry.title ?? null;
+        setNowPlayingUrl(entry.url);
+        setNowPlayingTitle(entry.title ?? null);
+        if (session.sessionStatus !== "active") {
+          setViewOnlyPosition(Number.isFinite(entry.position) ? Math.max(0, entry.position) : 0);
+        }
+      },
+      [session.sessionStatus]
+    );
 
     const loadFromHistory = useCallback(
       (entry: HistoryEntry, options?: { allowViewOnly?: boolean }) => {
@@ -288,12 +295,17 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         if (stored[0]) {
           applyHistoryDisplay(stored[0]);
         }
+        if (session.sessionStatus !== "active" && stored[0]) {
+          setViewOnlyPosition(
+            Number.isFinite(stored[0].position) ? Math.max(0, stored[0].position) : 0
+          );
+        }
       })();
 
       return () => {
         mounted = false;
       };
-    }, [applyHistoryDisplay]);
+    }, [applyHistoryDisplay, session.sessionStatus]);
 
     const loadStream = () => {
       if (isViewOnly) return;
@@ -359,6 +371,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
       if (isViewOnly) {
         applyHistoryDisplay(entry);
+        setViewOnlyPosition(Number.isFinite(entry.position) ? Math.max(0, entry.position) : 0);
         return;
       }
 
@@ -491,6 +504,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
       if (isScrubbing) return scrubPosition;
       if (pendingSeekPosition !== null) return pendingSeekPosition;
+      if (isViewOnly) return viewOnlyPosition ?? position;
       if (!isPlaying) return position;
 
       const elapsedMs = Date.now() - lastProgressAtRef.current;
@@ -498,12 +512,25 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       const estimate = lastProgressPosRef.current + elapsedSec;
       const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : Number.POSITIVE_INFINITY;
       return Math.min(estimate, safeDuration);
-    }, [duration, isPlaying, isScrubbing, nowTick, pendingSeekPosition, position, scrubPosition]);
+    }, [
+      duration,
+      isPlaying,
+      isScrubbing,
+      isViewOnly,
+      nowTick,
+      pendingSeekPosition,
+      position,
+      scrubPosition,
+      viewOnlyPosition,
+    ]);
 
     // Display position (scrub, then pending seek preview/optimistic, then live position)
     const displayPosition = optimisticPosition;
 
     if (isViewOnly) {
+      const isLiveDisplay = false;
+      const viewOnlyDisplayPos = displayPosition;
+      const viewOnlyDuration = duration && Number.isFinite(duration) ? duration : null;
       return (
         <View style={styles.container}>
           <Text style={styles.heading}>Audio Player</Text>
@@ -513,7 +540,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               {nowPlayingTitle ?? nowPlayingUrl ?? "Nothing loaded"}
             </Text>
             <Text style={styles.meta}>
-              {formatTime(position)} / {formatTime(duration)} {isLiveStream ? "(Live)" : ""}
+              {formatTime(viewOnlyDisplayPos)} / {formatTime(viewOnlyDuration)} {isLiveDisplay ? "(Live)" : ""}
             </Text>
           </View>
 
