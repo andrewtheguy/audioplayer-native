@@ -68,7 +68,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     }
 
     player = mediaPlayer
-    updateNowPlaying(title: title ?? "Stream", url: urlString, duration: currentDuration())
+    updateNowPlaying(title: title ?? "Stream", url: urlString, duration: safeDuration())
     resolver(nil)
   }
 
@@ -122,8 +122,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
 
   @objc
   func getProgress(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
-    let position = currentPosition()
-    let duration = currentDuration()
+    let position = safePosition()
+    let duration = safeDuration()
     resolve(["position": position, "duration": duration])
   }
 
@@ -134,7 +134,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     let url = options["url"] as? String ?? nowPlayingInfo["url"] as? String ?? ""
     let duration = options["duration"] as? NSNumber
 
-    updateNowPlaying(title: title, artist: artist, url: url, duration: duration?.doubleValue)
+    updateNowPlaying(title: title, artist: artist, url: url, duration: duration?.doubleValue ?? safeDuration())
   }
 
   private func configureAudioSession() {
@@ -192,6 +192,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
 
     commandCenter.skipForwardCommand.preferredIntervals = [NSNumber(value: forwardInterval)]
     commandCenter.skipBackwardCommand.preferredIntervals = [NSNumber(value: backwardInterval)]
+    commandCenter.skipForwardCommand.isEnabled = true
+    commandCenter.skipBackwardCommand.isEnabled = true
     commandCenter.changePlaybackPositionCommand.isEnabled = true
 
     commandCenter.skipForwardCommand.addTarget { [weak self] _ in
@@ -301,7 +303,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     if value.isFinite && value > 0 {
       return value
     }
-    return 0
+    // Assume non-live: provide a minimal fallback duration so lockscreen does not show "Live".
+    return 1
   }
 
   private func updateNowPlaying(title: String, artist: String = "", url: String = "", duration: Double? = nil) {
@@ -309,9 +312,12 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     nowPlayingInfo[MPMediaItemPropertyArtist] = artist
     nowPlayingInfo["url"] = url
 
-    if let duration = duration, duration > 0 {
-      nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
+    let resolvedDuration = duration ?? safeDuration()
+    if resolvedDuration > 0 {
+      nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = resolvedDuration
     }
+    nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = false
+    nowPlayingInfo[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.audio.rawValue
 
     let position = safePosition()
     nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = position
