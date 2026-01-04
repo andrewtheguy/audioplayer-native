@@ -95,6 +95,7 @@ async function setupPlayer(): Promise<boolean> {
         IOSCategoryOptions.AllowBluetoothA2DP,
       ],
       autoHandleInterruptions: false,
+      waitForBuffer: true,
       minBuffer: 60,
     });
     await configurePlayerOptions();

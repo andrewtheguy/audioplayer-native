@@ -63,7 +63,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const [nowPlayingTitle, setNowPlayingTitle] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
-    const [volume, setVolume] = useState(1);
     const [showUrlInput, setShowUrlInput] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [editingTitleValue, setEditingTitleValue] = useState("");
@@ -134,16 +133,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         await TrackPlayer.seekTo(next);
       } catch {
         // Ignore seek failures
-      }
-    }, []);
-
-    const applyVolume = useCallback(async (nextVolume: number) => {
-      const clamped = Math.min(1, Math.max(0, nextVolume));
-      setVolume(clamped);
-      try {
-        await TrackPlayer.setVolume(clamped);
-      } catch {
-        // Ignore volume failures
       }
     }, []);
 
@@ -232,9 +221,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           setNowPlayingUrl(urlToLoad);
           setNowPlayingTitle(resolvedTitle ?? null);
 
-          // Apply current volume
-          await TrackPlayer.setVolume(volume);
-
           // Seek to start position if provided
           const startPosition = options?.startPosition ?? null;
           if (startPosition !== null && Number.isFinite(startPosition) && startPosition > 0) {
@@ -250,7 +236,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           setLoading(false);
         }
       },
-      [saveHistoryEntry, volume]
+      [saveHistoryEntry]
     );
 
     const applyHistoryDisplay = useCallback(
@@ -740,23 +726,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             </Pressable>
           </View>
 
-          <View style={styles.volumeRow}>
-            <Text style={styles.meta}>Volume</Text>
-            <Text style={styles.meta}>{Math.round(volume * 100)}%</Text>
-          </View>
-
-          {/* Volume Slider */}
-          <Slider
-            style={styles.slider}
-            minimumValue={0}
-            maximumValue={1}
-            value={volume}
-            onValueChange={(value) => void applyVolume(value)}
-            disabled={isViewOnly}
-            minimumTrackTintColor="#60A5FA"
-            maximumTrackTintColor="#374151"
-            thumbTintColor="#93C5FD"
-          />
         </View>
 
         <View style={styles.card}>
@@ -892,12 +861,6 @@ const styles = StyleSheet.create({
   slider: {
     width: "100%",
     height: 40,
-  },
-  volumeRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 16,
   },
   nowPlaying: {
     color: "#F9FAFB",
