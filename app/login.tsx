@@ -9,17 +9,24 @@ export default function LoginScreen() {
   const [secret, setSecret] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const normalizeSecret = (value: string) => value.trim();
+
   const handleUseSecret = async () => {
-    if (!secret) {
+    const normalizedSecret = normalizeSecret(secret);
+    if (normalizedSecret !== secret) {
+      setSecret(normalizedSecret);
+    }
+
+    if (!normalizedSecret) {
       setError("Enter a secret first.");
       return;
     }
-    if (!isValidSecret(secret)) {
+    if (!isValidSecret(normalizedSecret)) {
       setError("Invalid secret. Check for typos.");
       return;
     }
     try {
-      await saveSessionSecret(secret);
+      await saveSessionSecret(normalizedSecret);
       router.replace("/player");
     } catch (err) {
       console.error("Failed to save session secret.", err);
@@ -50,8 +57,12 @@ export default function LoginScreen() {
           style={[styles.input, secret ? styles.inputWithButton : null]}
           value={secret}
           onChangeText={(value) => {
-            setSecret(value.trim());
+            setSecret(value);
             if (error) setError(null);
+          }}
+          onBlur={() => {
+            const trimmed = normalizeSecret(secret);
+            if (trimmed !== secret) setSecret(trimmed);
           }}
           autoCapitalize="none"
           autoCorrect={false}
