@@ -43,9 +43,6 @@ async function teardownPlayer(): Promise<void> {
   try {
     await TrackPlayer.stop();
     await TrackPlayer.reset();
-    if (typeof TrackPlayer.destroy === "function") {
-      await TrackPlayer.destroy();
-    }
   } catch {
     // Ignore teardown failures
   }

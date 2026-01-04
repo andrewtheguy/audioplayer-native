@@ -48,9 +48,6 @@ export default function PlayerScreen() {
       try {
         await TrackPlayer.stop();
         await TrackPlayer.reset();
-        if (typeof TrackPlayer.destroy === "function") {
-          await TrackPlayer.destroy();
-        }
       } catch {
         // Ignore teardown failures on logout
       }
