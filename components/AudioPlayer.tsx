@@ -609,6 +609,16 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           </Pressable>
         ) : (
           <View style={styles.card}>
+            <Text style={styles.label}>Title (optional)</Text>
+            <TextInput
+              style={styles.input}
+              value={title}
+              onChangeText={setTitle}
+              placeholder="My playlist"
+              placeholderTextColor="#6B7280"
+              editable={!isViewOnly}
+              autoFocus
+            />
             <Text style={styles.label}>Stream URL</Text>
             <TextInput
               style={styles.input}
@@ -617,16 +627,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               autoCapitalize="none"
               autoCorrect={false}
               placeholder="https://..."
-              placeholderTextColor="#6B7280"
-              editable={!isViewOnly}
-              autoFocus
-            />
-            <Text style={styles.label}>Title (optional)</Text>
-            <TextInput
-              style={styles.input}
-              value={title}
-              onChangeText={setTitle}
-              placeholder="My playlist"
               placeholderTextColor="#6B7280"
               editable={!isViewOnly}
             />
