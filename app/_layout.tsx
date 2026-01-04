@@ -1,16 +1,16 @@
-import "react-native-get-random-values";
-import "react-native-reanimated";
-import { useEffect, useState } from "react";
+import { PlaybackService } from "@/services/PlaybackService";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import { useEffect, useState } from "react";
+import "react-native-get-random-values";
+import "react-native-reanimated";
 import TrackPlayer, {
-  AndroidAudioContentType,
-  Capability,
-  IOSCategory,
-  IOSCategoryMode,
-  IOSCategoryOptions,
+    AndroidAudioContentType,
+    Capability,
+    IOSCategory,
+    IOSCategoryMode,
+    IOSCategoryOptions,
 } from "react-native-track-player";
-import { PlaybackService } from "@/services/PlaybackService";
 
 // Register the playback service (must be done at module level)
 TrackPlayer.registerPlaybackService(() => PlaybackService);
