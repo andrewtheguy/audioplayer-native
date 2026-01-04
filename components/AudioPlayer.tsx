@@ -359,11 +359,12 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       lastProgressAtRef.current = Date.now();
     }, [position]);
 
-    // Lightweight timer to drive optimistic position updates
+    // Lightweight timer to drive optimistic position updates; only run while actively playing
     useEffect(() => {
-      const id = setInterval(() => setNowTick(Date.now()), 100);
+      if (!isPlaying || isViewOnly) return;
+      const id = setInterval(() => setNowTick(Date.now()), 250);
       return () => clearInterval(id);
-    }, []);
+    }, [isPlaying, isViewOnly]);
 
     const handleRemoteSync = async (remoteHistory: HistoryEntry[]) => {
       const entry = remoteHistory[0];
