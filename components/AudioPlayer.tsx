@@ -553,8 +553,11 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               ) : (
                 history.map((entry) => (
                   <View key={entry.url} style={styles.historyItem}>
-                    <Text style={styles.historyTitle}>{entry.title ?? entry.url}</Text>
-                    <Text style={styles.meta}>{formatTime(entry.position)}</Text>
+                    <View style={styles.historyContent}>
+                      <Text style={styles.historyTitle}>{entry.title || "Untitled"}</Text>
+                      <Text style={styles.historyUrl} numberOfLines={1}>{entry.url}</Text>
+                      <Text style={styles.historyMeta}>{formatTime(entry.position)}</Text>
+                    </View>
                   </View>
                 ))
               )}
