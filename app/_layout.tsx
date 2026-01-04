@@ -5,11 +5,11 @@ import { useEffect, useState } from "react";
 import "react-native-get-random-values";
 import "react-native-reanimated";
 import TrackPlayer, {
-    AndroidAudioContentType,
-    Capability,
-    IOSCategory,
-    IOSCategoryMode,
-    IOSCategoryOptions,
+  AndroidAudioContentType,
+  Capability,
+  IOSCategory,
+  IOSCategoryMode,
+  IOSCategoryOptions,
 } from "react-native-track-player";
 
 // Register the playback service (must be done at module level)
@@ -35,7 +35,7 @@ async function configurePlayerOptions(): Promise<void> {
     compactCapabilities: [Capability.Play, Capability.Pause],
     forwardJumpInterval: 30,
     backwardJumpInterval: 15,
-    progressUpdateEventInterval: 1, // Update every 1 second (reduces CPU usage)
+    // Use TrackPlayer default progress update interval
   });
 }
 
@@ -57,12 +57,6 @@ async function setupPlayer(): Promise<boolean> {
       ],
       androidAudioContentType: AndroidAudioContentType.Music,
       autoHandleInterruptions: true,
-      waitForBuffer: true,
-      // Buffer configuration to reduce jitter
-      minBuffer: 15, // 15 seconds minimum buffer
-      maxBuffer: 300, // 5 minutes max buffer
-      playBuffer: 2.5, // Start playback after 2.5 seconds buffered
-      backBuffer: 30, // Keep 30 seconds behind current position
     });
     await configurePlayerOptions();
     return true;
