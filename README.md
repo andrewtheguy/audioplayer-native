@@ -55,4 +55,3 @@ Then in Xcode:
 ## Notes
 - The secret grants access to the synced history. Treat it like a password.
 - iOS-only: `app.json` is configured for the iOS platform.
-- Patched dependencies are pinned to exact versions. If you bump `@react-native-community/slider` or `react-native-screens`, regenerate patches with `npx patch-package` and commit the updated files in `patches/`.
