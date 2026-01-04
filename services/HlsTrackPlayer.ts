@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { NativeEventEmitter, NativeModules, Platform } from "react-native";
 
 const LINKING_ERROR =
@@ -242,9 +243,9 @@ export function addEventListener(event: HlsPlayerEvent, listener: EventListener)
 }
 
 export function usePlaybackState(): PlaybackState {
-  const [state, setState] = require("react").useState<PlaybackState>(playbackState);
+  const [state, setState] = useState<PlaybackState>(playbackState);
 
-  require("react").useEffect(() => {
+  useEffect(() => {
     const sub = emitter.addListener("playback-state", (payload?: { state?: string }) => {
       const next = { state: mapStateString(payload?.state) };
       playbackState = next;
@@ -257,10 +258,9 @@ export function usePlaybackState(): PlaybackState {
 }
 
 export function useProgress(updateInterval: number = 250): Progress {
-  const React = require("react");
-  const [progress, setProgress] = React.useState<Progress>({ position: 0, duration: 0, buffered: 0 });
+  const [progress, setProgress] = useState<Progress>({ position: 0, duration: 0, buffered: 0 });
 
-  React.useEffect(() => {
+  useEffect(() => {
     const sub = emitter.addListener("playback-progress", (payload?: Progress) => {
       setProgress({
         position: Number(payload?.position ?? 0),
