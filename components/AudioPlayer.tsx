@@ -82,7 +82,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const hasFiniteDuration = Number.isFinite(duration) && duration > 0;
     const isLiveStream = hasActiveTrack && !hasFiniteDuration;
     const effectivePlaybackState = playbackOverride ?? playbackState.state;
-    const isPlaying = effectivePlaybackState === State.Playing;
+    const isPlaying =
+      effectivePlaybackState === State.Playing || effectivePlaybackState === State.Buffering;
 
     const currentUrlRef = useRef<string | null>(null);
     const currentTitleRef = useRef<string | null>(null);
