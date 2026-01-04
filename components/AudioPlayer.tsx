@@ -361,10 +361,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
       const currentTrack = await TrackPlayer.getActiveTrack();
       if (currentUrlRef.current && currentUrlRef.current === entry.url && currentTrack) {
-        if (!isLiveStreamRef.current && Number.isFinite(entry.position)) {
-          const target = Math.max(0, entry.position);
-          await TrackPlayer.seekTo(target);
-        }
+        // Same track already playing - don't seek to remote position
+        // Our current playback position is more accurate than the stale remote sync
         return;
       }
 
