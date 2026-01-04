@@ -1,7 +1,7 @@
+import { saveSessionSecret } from "@/lib/history";
+import { isValidSecret } from "@/lib/nostr-crypto";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
-import { isValidSecret } from "@/lib/nostr-crypto";
-import { saveSessionSecret } from "@/lib/history";
 
 export type SessionStatus = "idle" | "active" | "stale" | "invalid" | "unknown";
 
