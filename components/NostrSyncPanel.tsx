@@ -12,16 +12,13 @@ interface NostrSessionApi {
   sessionStatus: SessionStatus;
   sessionNotice: string | null;
   localSessionId: string;
-  ignoreRemoteUntil: number;
   setSessionStatus: (status: SessionStatus) => void;
-  setSessionNotice: (notice: string | null) => void;
   clearSessionNotice: () => void;
-  startTakeoverGrace: () => void;
 }
 
 export interface NostrSyncPanelHandle {
   startSession: () => void;
-  takeOverSession: () => void;
+  enterViewMode: () => void;
   refreshSession: () => void;
   syncNow: () => void;
 }
@@ -31,19 +28,17 @@ interface NostrSyncPanelProps {
   history: HistoryEntry[];
   session: NostrSessionApi;
   onHistoryLoaded: (merged: HistoryEntry[]) => void;
-  onTakeOver?: (remoteHistory: HistoryEntry[]) => void;
   onRemoteSync?: (remoteHistory: HistoryEntry[]) => void;
 }
 
 export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelProps>(
-  ({ secret, history, session, onHistoryLoaded, onTakeOver, onRemoteSync }, ref) => {
+  ({ secret, history, session, onHistoryLoaded, onRemoteSync }, ref) => {
   const [fingerprint, setFingerprint] = useState<string | null>(null);
   const [fingerprintStatus, setFingerprintStatus] = useState<string | null>(null);
 
   const {
     status,
     message,
-    performLoad,
     performInitialLoad,
     startSession,
     performSave,
@@ -52,11 +47,8 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
     secret,
     sessionStatus: session.sessionStatus,
     setSessionStatus: session.setSessionStatus,
-    setSessionNotice: session.setSessionNotice,
     sessionId: session.localSessionId,
-    ignoreRemoteUntil: session.ignoreRemoteUntil,
     onHistoryLoaded,
-    onTakeOver,
     onRemoteSync,
   });
 
@@ -99,17 +91,14 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
   const handleStartSession = () => {
     if (isBusy) return;
     if (!secretValid) return;
-    session.startTakeoverGrace();
     session.setSessionStatus("active");
     startSession(secret);
   };
 
-  const handleTakeOver = () => {
+  const handleEnterView = () => {
     if (isBusy) return;
-    if (!secretValid) return;
-    session.startTakeoverGrace();
-    session.setSessionStatus("active");
-    performLoad(secret, true, true);
+    session.setSessionStatus("idle");
+    session.clearSessionNotice();
   };
 
   const handleRefresh = () => {
@@ -128,7 +117,7 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
 
   useImperativeHandle(ref, () => ({
     startSession: handleStartSession,
-    takeOverSession: handleTakeOver,
+    enterViewMode: handleEnterView,
     refreshSession: handleRefresh,
     syncNow: handleManualSave,
   }));
@@ -145,25 +134,23 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
       </View>
 
       <View style={styles.row}>
-        {session.sessionStatus === "idle" || session.sessionStatus === "unknown" ? (
-          <Pressable
-            style={[styles.button, isBusy && styles.buttonDisabled]}
-            onPress={handleStartSession}
-            disabled={isBusy}
-          >
-            <Text style={styles.buttonText}>Start Session</Text>
-          </Pressable>
-        ) : null}
+        <Pressable
+          style={[styles.button, isBusy && styles.buttonDisabled]}
+          onPress={handleStartSession}
+          disabled={isBusy}
+        >
+          <Text style={styles.buttonText}>
+            {session.sessionStatus === "active" ? "Publish Mode" : "Enter Publish Mode"}
+          </Text>
+        </Pressable>
 
-        {session.sessionStatus === "stale" ? (
-          <Pressable
-            style={[styles.button, isBusy && styles.buttonDisabled]}
-            onPress={handleTakeOver}
-            disabled={isBusy}
-          >
-            <Text style={styles.buttonText}>Take Over</Text>
-          </Pressable>
-        ) : null}
+        <Pressable
+          style={[styles.button, isBusy && styles.buttonDisabled]}
+          onPress={handleEnterView}
+          disabled={isBusy}
+        >
+          <Text style={styles.buttonText}>View Mode</Text>
+        </Pressable>
 
         {session.sessionStatus === "active" ? (
           <Pressable

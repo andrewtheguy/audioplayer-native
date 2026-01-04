@@ -9,21 +9,16 @@ interface UseNostrSessionOptions {
   secret: string;
   sessionId?: string;
   onSessionStatusChange?: (status: SessionStatus) => void;
-  takeoverGraceMs?: number;
 }
 
 interface UseNostrSessionResult {
   sessionStatus: SessionStatus;
   sessionNotice: string | null;
   localSessionId: string;
-  ignoreRemoteUntil: number;
   setSessionStatus: (status: SessionStatus) => void;
   setSessionNotice: (notice: string | null) => void;
   clearSessionNotice: () => void;
-  startTakeoverGrace: () => void;
 }
-
-const DEFAULT_TAKEOVER_GRACE_MS = 15000;
 
 function getInitialStatus(secret: string): SessionStatus {
   if (!secret) return "unknown";
@@ -42,7 +37,6 @@ export function useNostrSession({
   secret,
   sessionId,
   onSessionStatusChange,
-  takeoverGraceMs = DEFAULT_TAKEOVER_GRACE_MS,
 }: UseNostrSessionOptions): UseNostrSessionResult {
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>(
     getInitialStatus(secret)
@@ -51,7 +45,6 @@ export function useNostrSession({
     getInitialNotice(getInitialStatus(secret))
   );
   const [localSessionId] = useState(() => sessionId ?? uuidv4());
-  const [ignoreRemoteUntil, setIgnoreRemoteUntil] = useState<number>(0);
 
   const prevStatusRef = useRef<SessionStatus>(sessionStatus);
   const staleNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -96,10 +89,6 @@ export function useNostrSession({
     };
   }, [sessionStatus]);
 
-  const startTakeoverGrace = useCallback(() => {
-    setIgnoreRemoteUntil(Date.now() + takeoverGraceMs);
-  }, [takeoverGraceMs]);
-
   const clearSessionNotice = useCallback(() => {
     setSessionNotice(null);
   }, []);
@@ -108,10 +97,8 @@ export function useNostrSession({
     sessionStatus,
     sessionNotice,
     localSessionId,
-    ignoreRemoteUntil,
     setSessionStatus,
     setSessionNotice,
     clearSessionNotice,
-    startTakeoverGrace,
   };
 }

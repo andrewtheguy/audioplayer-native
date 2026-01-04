@@ -28,8 +28,8 @@ import {
 } from "react-native";
 
 export interface AudioPlayerHandle {
-  startSession: () => void;
-  takeOverSession: () => void;
+  enterPublishMode: () => void;
+  enterViewMode: () => void;
   refreshSession: () => void;
   syncNow: () => void;
   getSessionStatus: () => SessionStatus;
@@ -98,8 +98,12 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     }, [isLiveStream]);
 
     useImperativeHandle(ref, () => ({
-      startSession: () => syncRef.current?.startSession(),
-      takeOverSession: () => syncRef.current?.takeOverSession(),
+      enterPublishMode: () => syncRef.current?.startSession(),
+      enterViewMode: () => {
+        session.setSessionStatus("idle");
+        session.clearSessionNotice();
+        syncRef.current?.enterViewMode();
+      },
       refreshSession: () => syncRef.current?.refreshSession(),
       syncNow: () => syncRef.current?.syncNow(),
       getSessionStatus: () => session.sessionStatus,
@@ -555,7 +559,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               void saveHistory(merged);
             }}
             onRemoteSync={handleRemoteSync}
-            onTakeOver={handleRemoteSync}
           />
         </View>
       );
@@ -771,7 +774,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             void saveHistory(merged);
           }}
           onRemoteSync={handleRemoteSync}
-          onTakeOver={handleRemoteSync}
         />
       </View>
     );

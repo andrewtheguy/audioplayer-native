@@ -15,11 +15,8 @@ interface UseNostrSyncOptions {
   secret: string;
   sessionStatus: SessionStatus;
   setSessionStatus: (status: SessionStatus) => void;
-  setSessionNotice: (notice: string | null) => void;
   sessionId: string;
-  ignoreRemoteUntil: number;
   onHistoryLoaded: (merged: HistoryEntry[]) => void;
-  onTakeOver?: (remoteHistory: HistoryEntry[]) => void;
   onRemoteSync?: (remoteHistory: HistoryEntry[]) => void;
   debounceSaveMs?: number;
 }
@@ -27,17 +24,13 @@ interface UseNostrSyncOptions {
 interface UseNostrSyncResult {
   status: "idle" | "loading" | "saving" | "synced" | "error";
   message: string | null;
-  performLoad: (
-    secret: string,
-    isTakeOver?: boolean,
-    followRemote?: boolean
-  ) => (() => void) | undefined;
+  performLoad: (secret: string, followRemote?: boolean) => (() => void) | undefined;
   performInitialLoad: (secret: string) => void;
   startSession: (secret: string) => void;
   performSave: (
     secret: string,
     historyToSave: HistoryEntry[],
-    options?: { silent?: boolean; allowStale?: boolean }
+    options?: { silent?: boolean }
   ) => Promise<void>;
 }
 
@@ -48,11 +41,8 @@ export function useNostrSync({
   secret,
   sessionStatus,
   setSessionStatus,
-  setSessionNotice,
   sessionId,
-  ignoreRemoteUntil,
   onHistoryLoaded,
-  onTakeOver,
   onRemoteSync,
   debounceSaveMs = DEFAULT_DEBOUNCE_SAVE_MS,
 }: UseNostrSyncOptions): UseNostrSyncResult {
@@ -64,48 +54,36 @@ export function useNostrSync({
 
   const historyRef = useRef(history);
   const onHistoryLoadedRef = useRef(onHistoryLoaded);
-  const onTakeOverRef = useRef(onTakeOver);
   const onRemoteSyncRef = useRef(onRemoteSync);
   const sessionStatusRef = useRef(sessionStatus);
-  const ignoreRemoteUntilRef = useRef(ignoreRemoteUntil);
   const setSessionStatusRef = useRef(setSessionStatus);
-  const setSessionNoticeRef = useRef(setSessionNotice);
 
   const isLocalChangeRef = useRef(false);
   const pendingPublishRef = useRef(false);
   const latestTimestampRef = useRef(0);
-  const dirtyRef = useRef(false);
 
   useEffect(() => {
     historyRef.current = history;
     onHistoryLoadedRef.current = onHistoryLoaded;
-    onTakeOverRef.current = onTakeOver;
     onRemoteSyncRef.current = onRemoteSync;
     sessionStatusRef.current = sessionStatus;
-    ignoreRemoteUntilRef.current = ignoreRemoteUntil;
     setSessionStatusRef.current = setSessionStatus;
-    setSessionNoticeRef.current = setSessionNotice;
-    dirtyRef.current = true;
   }, [
     history,
     onHistoryLoaded,
-    onTakeOver,
     onRemoteSync,
     sessionStatus,
-    ignoreRemoteUntil,
     setSessionStatus,
-    setSessionNotice,
   ]);
 
   const performSave = useCallback(
     async (
       currentSecret: string,
       historyToSave: HistoryEntry[],
-      options?: { silent?: boolean; allowStale?: boolean }
+      options?: { silent?: boolean }
     ) => {
       if (!currentSecret) return;
       if (pendingPublishRef.current) return;
-      if (sessionStatusRef.current === "stale" && !options?.allowStale) return;
       if (!options?.silent) {
         setStatus("saving");
         setMessage("Saving history...");
@@ -139,13 +117,11 @@ export function useNostrSync({
   );
 
   const mergeAndNotify = useCallback(
-    (cloudHistory: HistoryEntry[], isTakeOver: boolean, followRemote: boolean) => {
+    (cloudHistory: HistoryEntry[], followRemote: boolean) => {
       const result = mergeHistory(historyRef.current, cloudHistory);
       onHistoryLoadedRef.current(result.merged);
 
-      if (isTakeOver) {
-        onTakeOverRef.current?.(cloudHistory);
-      } else if (followRemote) {
+      if (followRemote) {
         onRemoteSyncRef.current?.(cloudHistory);
       }
 
@@ -154,27 +130,8 @@ export function useNostrSync({
     []
   );
 
-  const updateSessionStateAndMaybeSave = useCallback(
-    (result: { merged: HistoryEntry[]; addedFromCloud: number }, isTakeOver: boolean) => {
-      if (sessionStatusRef.current === "active") {
-        setStatus("synced");
-        setMessage(
-          result.addedFromCloud > 0
-            ? `Merged ${result.addedFromCloud} remote entries`
-            : "History is up to date"
-        );
-      }
-
-      if (isTakeOver) {
-        setStatus("synced");
-        setMessage("Session claimed. Auto-save enabled.");
-      }
-    },
-    []
-  );
-
   const performLoad = useCallback(
-    (currentSecret: string, isTakeOver = false, followRemote = false) => {
+    (currentSecret: string, followRemote = false) => {
       if (!currentSecret) return;
 
       const controller = new AbortController();
@@ -188,60 +145,29 @@ export function useNostrSync({
           const cloudData = await loadHistoryFromNostr(keys.privateKey, keys.publicKey, signal);
 
           if (cloudData) {
-            const { history: cloudHistory, sessionId: remoteSid, timestamp } = cloudData;
+            const { history: cloudHistory, timestamp } = cloudData;
             if (timestamp > latestTimestampRef.current) {
               latestTimestampRef.current = timestamp;
             }
-
-            if (
-              !isTakeOver &&
-              sessionStatusRef.current === "active" &&
-              remoteSid &&
-              remoteSid !== sessionId
-            ) {
-              sessionStatusRef.current = "stale";
-              setSessionStatusRef.current("stale");
-              setSessionNoticeRef.current("Another device is now active.");
-              setStatus("error");
-              setMessage("Another device is active. Take over to continue.");
-              return;
-            }
-
-            const result = mergeAndNotify(cloudHistory, isTakeOver, followRemote);
-            updateSessionStateAndMaybeSave(result, isTakeOver);
-
-            if (isTakeOver) {
-              try {
-                await performSave(currentSecret, historyRef.current, { allowStale: true });
-                sessionStatusRef.current = "active";
-                setSessionStatusRef.current("active");
-                setSessionNoticeRef.current(null);
-              } catch (err) {
-                console.error("Failed to save history after takeover:", err);
-                setStatus("error");
-                setMessage(
-                  err instanceof Error ? err.message : "Failed to save history after takeover"
-                );
-                return;
-              }
+            const result = mergeAndNotify(cloudHistory, followRemote);
+            if (sessionStatusRef.current === "active") {
+              setStatus("synced");
+              setMessage(
+                result.addedFromCloud > 0
+                  ? `Merged ${result.addedFromCloud} remote entries`
+                  : "History is up to date"
+              );
             }
           } else {
             setStatus("synced");
             setMessage("No synced history found.");
-            if (isTakeOver || sessionStatusRef.current === "active") {
+            if (sessionStatusRef.current === "active") {
               try {
-                await performSave(currentSecret, historyRef.current, { allowStale: true });
-                if (isTakeOver) {
-                  sessionStatusRef.current = "active";
-                  setSessionStatusRef.current("active");
-                  setSessionNoticeRef.current(null);
-                }
+                await performSave(currentSecret, historyRef.current, { silent: true });
               } catch (err) {
-                console.error("Failed to save history after takeover:", err);
+                console.error("Failed to save history after load:", err);
                 setStatus("error");
-                setMessage(
-                  err instanceof Error ? err.message : "Failed to save history after takeover"
-                );
+                setMessage(err instanceof Error ? err.message : "Failed to save history");
                 return;
               }
             }
@@ -252,9 +178,9 @@ export function useNostrSync({
         }
       })();
 
-    return () => controller.abort();
-  },
-    [mergeAndNotify, performSave, sessionId, updateSessionStateAndMaybeSave]
+      return () => controller.abort();
+    },
+    [mergeAndNotify, performSave]
   );
 
   const performInitialLoad = useCallback(
@@ -299,8 +225,7 @@ export function useNostrSync({
       if (!currentSecret) return;
       sessionStatusRef.current = "active";
       setSessionStatusRef.current("active");
-      setSessionNoticeRef.current(null);
-      performLoad(currentSecret, true, true);
+      performLoad(currentSecret, true);
     },
     [performLoad]
   );
@@ -322,19 +247,8 @@ export function useNostrSync({
           keys.privateKey,
           (payload: HistoryPayload) => {
             if (payload.sessionId && payload.sessionId === sessionId) return;
-
-            const inGrace = Date.now() < ignoreRemoteUntilRef.current;
-            const isForeignSession = payload.sessionId && payload.sessionId !== sessionId;
-
-            if (isForeignSession && !inGrace && sessionStatusRef.current === "active") {
-              sessionStatusRef.current = "stale";
-              setSessionStatusRef.current("stale");
-              setSessionNoticeRef.current("Another device is now active.");
-            }
-
             if (payload.timestamp <= latestTimestampRef.current) return;
             latestTimestampRef.current = payload.timestamp;
-            if (inGrace) return;
             if (isLocalChangeRef.current) return;
 
             const result = mergeHistory(historyRef.current, payload.history);
@@ -357,7 +271,7 @@ export function useNostrSync({
     const subscription = AppState.addEventListener("change", (nextState) => {
       setAppState(nextState);
       if (nextState === "active" && secret && sessionStatus !== "invalid") {
-        performLoad(secret, false, true);
+        performLoad(secret, true);
       }
     });
 
