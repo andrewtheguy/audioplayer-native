@@ -38,6 +38,7 @@ export async function PlaybackService(): Promise<void> {
         console.error("Remote jump backward failed:", error);
       }
     }),
+    // Intentionally map hardware next/previous to fixed time skips since this app is single-track.
     TrackPlayer.addEventListener(Event.RemoteNext, async () => {
       try {
         const position = await TrackPlayer.getProgress().then((p) => p.position);
