@@ -112,6 +112,29 @@ function mapStateString(nextState?: string): State {
   }
 }
 
+function stateToString(state: State): string {
+  switch (state) {
+    case State.Playing:
+      return "playing";
+    case State.Paused:
+      return "paused";
+    case State.Stopped:
+      return "stopped";
+    case State.Ready:
+      return "ready";
+    case State.Buffering:
+      return "buffering";
+    default:
+      return "none";
+  }
+}
+
+function emitPlaybackState(next: State): void {
+  playbackState = { state: next };
+  const raw = stateToString(next);
+  (emitter as any)?.emit?.("playback-state", { state: raw });
+}
+
 function attachCoreListeners(): void {
   emitter.removeAllListeners("playback-state");
   emitter.addListener("playback-state", (payload?: { state?: string }) => {
@@ -160,27 +183,31 @@ export async function add(track: Track): Promise<void> {
     artist: track.artist ?? "",
     url: track.url,
   });
+  emitPlaybackState(State.Ready);
 }
 
 export async function play(): Promise<void> {
   ensureIOS();
   await NativeHlsPlayer.play();
+  emitPlaybackState(State.Playing);
 }
 
 export async function pause(): Promise<void> {
   ensureIOS();
   await NativeHlsPlayer.pause();
+  emitPlaybackState(State.Paused);
 }
 
 export async function stop(): Promise<void> {
   ensureIOS();
   await NativeHlsPlayer.stop();
+  emitPlaybackState(State.Stopped);
 }
 
 export async function reset(): Promise<void> {
   ensureIOS();
   await NativeHlsPlayer.reset();
-  playbackState = { state: State.None };
+  emitPlaybackState(State.Stopped);
   activeTrack = null;
 }
 

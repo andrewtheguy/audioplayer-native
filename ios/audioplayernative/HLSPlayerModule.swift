@@ -76,6 +76,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
 
     player = mediaPlayer
     hasValidDuration = false
+    nowPlayingInfo = [:]
     // Set as live stream initially until we get valid duration from VLC
     nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
     updateNowPlaying(title: title ?? "Stream", url: urlString, duration: nil)
@@ -87,6 +88,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     initialize()
     player?.play()
     updateNowPlayingState(isPlaying: true)
+    updateNowPlayingProgress()
     sendPlaybackState("playing")
     resolve(nil)
   }
@@ -95,15 +97,22 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   func pause(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
     player?.pause()
     updateNowPlayingState(isPlaying: false)
+    updateNowPlayingProgress()
     sendPlaybackState("paused")
     resolve(nil)
   }
 
   @objc
   func stop(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
-    player?.stop()
-    seekTo(NSNumber(value: 0), resolver: { _ in }, rejecter: { _, _, _ in })
+    if let player = player {
+      player.stop()
+      player.time = VLCTime(int: 0)
+    }
+    hasValidDuration = false
+    nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = nil
+    nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
     updateNowPlayingState(isPlaying: false)
+    updateNowPlayingProgress()
     sendPlaybackState("stopped")
     resolve(nil)
   }
@@ -112,7 +121,12 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   func reset(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
     player?.stop()
     player = nil
+    hasValidDuration = false
+    nowPlayingInfo = [:]
+    nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
+    MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
     updateNowPlayingState(isPlaying: false)
+    updateNowPlayingProgress()
     sendPlaybackState("none")
     resolve(nil)
   }
@@ -263,9 +277,15 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   }
 
   private func handleRemoteStop() {
-    player?.pause()
-    seekTo(NSNumber(value: 0), resolver: { _ in }, rejecter: { _, _, _ in })
+    if let player = player {
+      player.stop()
+      player.time = VLCTime(int: 0)
+    }
+    hasValidDuration = false
+    nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = nil
+    nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
     updateNowPlayingState(isPlaying: false)
+    updateNowPlayingProgress()
     sendPlaybackState("stopped")
     sendEvent(withName: "remote-stop", body: nil)
   }

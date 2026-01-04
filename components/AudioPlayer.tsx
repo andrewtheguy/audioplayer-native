@@ -73,12 +73,16 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const lastProgressPosRef = useRef(0);
     const [nowTick, setNowTick] = useState(Date.now());
     const [viewOnlyPosition, setViewOnlyPosition] = useState<number | null>(null);
+    const [playbackOverride, setPlaybackOverride] = useState<State | null>(null);
 
     // TrackPlayer hooks for real-time updates
     const { position, duration } = useProgress(200);
     const playbackState = usePlaybackState();
-    const isPlaying = playbackState.state === State.Playing;
-    const isLiveStream = !duration || duration === 0 || !Number.isFinite(duration);
+    const hasActiveTrack = Boolean(nowPlayingUrl);
+    const hasFiniteDuration = Number.isFinite(duration) && duration > 0;
+    const isLiveStream = hasActiveTrack && !hasFiniteDuration;
+    const effectivePlaybackState = playbackOverride ?? playbackState.state;
+    const isPlaying = effectivePlaybackState === State.Playing;
 
     const currentUrlRef = useRef<string | null>(null);
     const currentTitleRef = useRef<string | null>(null);
@@ -97,6 +101,19 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       isLiveStreamRef.current = isLiveStream;
     }, [isLiveStream]);
 
+    useEffect(() => {
+      if (playbackOverride === null) return;
+      if (playbackState.state === playbackOverride) {
+        setPlaybackOverride(null);
+      }
+    }, [playbackOverride, playbackState.state]);
+
+    useEffect(() => {
+      if (playbackOverride === null) return;
+      const id = setTimeout(() => setPlaybackOverride(null), 2000);
+      return () => clearTimeout(id);
+    }, [playbackOverride]);
+
     useImperativeHandle(ref, () => ({
       enterPublishMode: () => syncRef.current?.startSession(),
       enterViewMode: () => {
@@ -111,18 +128,22 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     const handlePlay = useCallback(async () => {
       if (isViewOnly) return;
+      setPlaybackOverride(State.Playing);
       try {
         await TrackPlayer.play();
       } catch (err) {
+        setPlaybackOverride(null);
         setError(err instanceof Error ? err.message : "Playback error");
       }
     }, [isViewOnly]);
 
     const handlePause = useCallback(async () => {
       if (isViewOnly) return;
+      setPlaybackOverride(State.Paused);
       try {
         await TrackPlayer.pause();
       } catch (err) {
+        setPlaybackOverride(null);
         setError(err instanceof Error ? err.message : "Playback error");
       }
     }, [isViewOnly]);
@@ -144,6 +165,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         try {
           await TrackPlayer.stop();
           await TrackPlayer.reset();
+          setPlaybackOverride(null);
         } catch {
           // Ignore cleanup failures
         }
@@ -326,7 +348,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     };
 
     const seekBy = async (deltaSeconds: number) => {
-      if (isViewOnly || isLiveStreamRef.current) return;
+      if (isViewOnly || isLiveStreamRef.current || !currentUrlRef.current) return;
       const next = Math.max(0, position + deltaSeconds);
       setPendingSeekPosition(next);
       lastSeekAtRef.current = Date.now();
@@ -511,12 +533,14 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     ]);
 
     // Display position (scrub, then pending seek preview/optimistic, then live position)
-    const displayPosition = optimisticPosition;
+    const displayPosition = hasActiveTrack ? optimisticPosition : 0;
+    const displayDuration = hasActiveTrack && hasFiniteDuration ? duration : null;
+    const displayPositionLabel = hasActiveTrack ? displayPosition : null;
 
     if (isViewOnly) {
       const isLiveDisplay = false;
       const viewOnlyDisplayPos = displayPosition;
-      const viewOnlyDuration = duration && Number.isFinite(duration) ? duration : null;
+      const viewOnlyDuration = displayDuration;
       return (
         <View style={styles.container}>
           <Text style={styles.heading}>Audio Player</Text>
@@ -676,21 +700,21 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           )}
           <View style={styles.seekRow}>
             {isLiveStream ? <View style={styles.seekPlaceholder} /> : (
-              <Text style={styles.meta}>{formatTime(displayPosition)}</Text>
+              <Text style={styles.meta}>{formatTime(displayPositionLabel)}</Text>
             )}
-            <Text style={styles.meta}>{isLiveStream ? "Live" : formatTime(duration)}</Text>
+            <Text style={styles.meta}>{isLiveStream ? "Live" : formatTime(displayDuration)}</Text>
           </View>
 
           {/* Seek Slider */}
           <Slider
             style={styles.slider}
             minimumValue={0}
-            maximumValue={duration || 1}
-            value={displayPosition}
+            maximumValue={hasFiniteDuration ? duration : 1}
+            value={hasActiveTrack && hasFiniteDuration ? displayPosition : 0}
             onSlidingStart={handleSeekStart}
             onValueChange={handleSeekChange}
             onSlidingComplete={handleSeekComplete}
-            disabled={isViewOnly || isLiveStream || !duration}
+            disabled={isViewOnly || isLiveStream || !hasActiveTrack || !hasFiniteDuration}
             minimumTrackTintColor="#60A5FA"
             maximumTrackTintColor="#374151"
             thumbTintColor="#93C5FD"
