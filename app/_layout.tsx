@@ -53,8 +53,8 @@ async function setupPlayer(): Promise<boolean> {
     // Clear any lingering playback from prior sessions/reloads
     await teardownPlayer();
 
-    const existingState = await TrackPlayer.getState().catch(() => null);
-    if (existingState !== null) {
+    const existingState = await TrackPlayer.getPlaybackState().catch(() => null);
+    if (existingState !== null && existingState.state !== undefined) {
       await configurePlayerOptions();
       return true;
     }
