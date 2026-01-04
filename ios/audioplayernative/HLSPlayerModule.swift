@@ -288,6 +288,22 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     return value.isFinite ? value : 0
   }
 
+  private func safePosition() -> Double {
+    let value = currentPosition()
+    if value.isFinite && value >= 0 {
+      return value
+    }
+    return 0
+  }
+
+  private func safeDuration() -> Double {
+    let value = currentDuration()
+    if value.isFinite && value > 0 {
+      return value
+    }
+    return 0
+  }
+
   private func updateNowPlaying(title: String, artist: String = "", url: String = "", duration: Double? = nil) {
     nowPlayingInfo[MPMediaItemPropertyTitle] = title
     nowPlayingInfo[MPMediaItemPropertyArtist] = artist
@@ -297,21 +313,23 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
       nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
     }
 
-    nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentPosition()
+    let position = safePosition()
+    nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = position
     nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = player?.isPlaying == true ? 1.0 : 0.0
     MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
   }
 
   private func updateNowPlayingState(isPlaying: Bool) {
     nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
-    nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentPosition()
+    nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = safePosition()
     MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
   }
 
   private func updateNowPlayingProgress() {
-    nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentPosition()
-    if currentDuration() > 0 {
-      nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = currentDuration()
+    nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = safePosition()
+    let duration = safeDuration()
+    if duration > 0 {
+      nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
     }
     nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = player?.isPlaying == true ? 1.0 : 0.0
     MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
@@ -350,8 +368,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   }
 
   func mediaPlayerTimeChanged(_ aNotification: Notification) {
-    let position = currentPosition()
-    let duration = currentDuration()
+    let position = safePosition()
+    let duration = safeDuration()
     sendEvent(withName: "playback-progress", body: [
       "position": position,
       "duration": duration,
