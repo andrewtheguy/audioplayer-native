@@ -1,3 +1,7 @@
+import { AudioPlayer, type AudioPlayerHandle } from "@/components/AudioPlayer";
+import type { SessionStatus } from "@/hooks/useNostrSession";
+import { clearSessionSecret, getSavedSessionSecret } from "@/lib/history";
+import { Redirect, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -8,10 +12,6 @@ import {
   Text,
   View,
 } from "react-native";
-import { Redirect, useRouter } from "expo-router";
-import { AudioPlayer, type AudioPlayerHandle } from "@/components/AudioPlayer";
-import type { SessionStatus } from "@/hooks/useNostrSession";
-import { clearSessionSecret, getSavedSessionSecret } from "@/lib/history";
 import TrackPlayer from "react-native-track-player";
 
 export default function PlayerScreen() {
