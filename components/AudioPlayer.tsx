@@ -69,6 +69,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const [scrubPosition, setScrubPosition] = useState(0);
     const [pendingSeekPosition, setPendingSeekPosition] = useState<number | null>(null);
     const lastSeekAtRef = useRef(0);
+    const lastSeekTargetRef = useRef<number | null>(null);
     const lastProgressAtRef = useRef(Date.now());
     const lastProgressPosRef = useRef(0);
     const [nowTick, setNowTick] = useState(Date.now());
@@ -115,6 +116,15 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     useEffect(() => {
       if (playbackOverride === null) return;
       const id = setTimeout(() => setPlaybackOverride(null), 2000);
+      return () => clearTimeout(id);
+    }, [playbackOverride]);
+
+    // Fallback: if buffering persists for too long without movement, clear override to native state
+    useEffect(() => {
+      if (playbackOverride !== State.Buffering) return;
+      const id = setTimeout(() => {
+        setPlaybackOverride(null);
+      }, 4000);
       return () => clearTimeout(id);
     }, [playbackOverride]);
 
@@ -356,6 +366,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       const next = Math.max(0, position + deltaSeconds);
       setPendingSeekPosition(next);
       lastSeekAtRef.current = Date.now();
+      lastSeekTargetRef.current = next;
+      setPlaybackOverride(State.Buffering);
       await seekTo(next);
     };
 
@@ -485,18 +497,22 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       setIsScrubbing(true);
       setScrubPosition(position);
       setPendingSeekPosition(null);
+      setPlaybackOverride(State.Buffering);
     };
 
     const handleSeekChange = (value: number) => {
       setScrubPosition(value);
       setPendingSeekPosition(value);
       lastSeekAtRef.current = Date.now();
+      lastSeekTargetRef.current = value;
     };
 
     const handleSeekComplete = async (value: number) => {
       setScrubPosition(value);
       setPendingSeekPosition(value);
       lastSeekAtRef.current = Date.now();
+      lastSeekTargetRef.current = value;
+      setPlaybackOverride(State.Buffering);
       await seekTo(value);
       setIsScrubbing(false);
     };
@@ -509,6 +525,16 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         setPendingSeekPosition(null);
       }
     }, [pendingSeekPosition, position]);
+
+    // Clear buffering override once playback reaches the seek target
+    useEffect(() => {
+      const target = lastSeekTargetRef.current;
+      if (target === null) return;
+      if (Math.abs(position - target) <= 0.35) {
+        setPlaybackOverride(State.Playing);
+        lastSeekTargetRef.current = null;
+      }
+    }, [position]);
 
     const optimisticPosition = useMemo(() => {
       // Recompute every timer tick for smoother UI
