@@ -2,6 +2,7 @@ import AVFoundation
 import MediaPlayer
 import MobileVLCKit
 import React
+import UIKit
 
 @objc(HLSPlayerModule)
 class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
@@ -10,6 +11,11 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   private var backwardInterval: Double = 15
   private var isInitialized = false
   private var nowPlayingInfo: [String: Any] = [:]
+  private var hasValidDuration = false
+
+  deinit {
+    NotificationCenter.default.removeObserver(self)
+  }
 
   override static func requiresMainQueueSetup() -> Bool {
     return true
@@ -36,6 +42,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     if isInitialized { return }
     configureAudioSession()
     configureRemoteCommands()
+    configureLifecycleObservers()
     isInitialized = true
   }
 
@@ -68,7 +75,10 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     }
 
     player = mediaPlayer
-    updateNowPlaying(title: title ?? "Stream", url: urlString, duration: safeDuration())
+    hasValidDuration = false
+    // Set as live stream initially until we get valid duration from VLC
+    nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
+    updateNowPlaying(title: title ?? "Stream", url: urlString, duration: nil)
     resolver(nil)
   }
 
@@ -77,7 +87,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     initialize()
     player?.play()
     updateNowPlayingState(isPlaying: true)
-    sendPlaybackState("playing")
+    // State emission handled by mediaPlayerStateChanged delegate
     resolve(nil)
   }
 
@@ -85,7 +95,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   func pause(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
     player?.pause()
     updateNowPlayingState(isPlaying: false)
-    sendPlaybackState("paused")
+    // State emission handled by mediaPlayerStateChanged delegate
     resolve(nil)
   }
 
@@ -94,7 +104,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     player?.stop()
     seekTo(NSNumber(value: 0), resolver: { _ in }, rejecter: { _, _, _ in })
     updateNowPlayingState(isPlaying: false)
-    sendPlaybackState("stopped")
+    // State emission handled by mediaPlayerStateChanged delegate
     resolve(nil)
   }
 
@@ -150,6 +160,21 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     } catch {
       sendEvent(withName: "playback-error", body: ["message": "Audio session error", "detail": error.localizedDescription])
     }
+  }
+
+  private func configureLifecycleObservers() {
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(handleAppForeground),
+      name: UIApplication.willEnterForegroundNotification,
+      object: nil
+    )
+  }
+
+  @objc private func handleAppForeground() {
+    // Re-sync position and state when app returns from background
+    updateNowPlayingProgress()
+    updateNowPlayingState(isPlaying: player?.isPlaying == true)
   }
 
   private func configureRemoteCommands() {
@@ -303,8 +328,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     if value.isFinite && value > 0 {
       return value
     }
-    // Assume non-live: provide a minimal fallback duration so lockscreen does not show "Live".
-    return 1
+    // Return 0 when duration is unknown - caller should handle this
+    return 0
   }
 
   private func updateNowPlaying(title: String, artist: String = "", url: String = "", duration: Double? = nil) {
@@ -315,8 +340,11 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     let resolvedDuration = duration ?? safeDuration()
     if resolvedDuration > 0 {
       nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = resolvedDuration
+      // Only mark as non-live once we have a valid duration
+      if hasValidDuration {
+        nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = false
+      }
     }
-    nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = false
     nowPlayingInfo[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.audio.rawValue
 
     let position = safePosition()
@@ -376,6 +404,14 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   func mediaPlayerTimeChanged(_ aNotification: Notification) {
     let position = safePosition()
     let duration = safeDuration()
+
+    // Once we get a valid duration, update Now Playing to non-live mode
+    if !hasValidDuration && duration > 0 {
+      hasValidDuration = true
+      nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = false
+      nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
+    }
+
     sendEvent(withName: "playback-progress", body: [
       "position": position,
       "duration": duration,
