@@ -1,25 +1,32 @@
+import { saveSessionSecret } from "@/lib/history";
+import { generateSecret, isValidSecret } from "@/lib/nostr-crypto";
+import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { useRouter } from "expo-router";
-import { generateSecret, isValidSecret } from "@/lib/nostr-crypto";
-import { saveSessionSecret } from "@/lib/history";
 
 export default function LoginScreen() {
   const router = useRouter();
   const [secret, setSecret] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const normalizeSecret = (value: string) => value.trim();
+
   const handleUseSecret = async () => {
-    if (!secret) {
+    const normalizedSecret = normalizeSecret(secret);
+    if (normalizedSecret !== secret) {
+      setSecret(normalizedSecret);
+    }
+
+    if (!normalizedSecret) {
       setError("Enter a secret first.");
       return;
     }
-    if (!isValidSecret(secret)) {
+    if (!isValidSecret(normalizedSecret)) {
       setError("Invalid secret. Check for typos.");
       return;
     }
     try {
-      await saveSessionSecret(secret);
+      await saveSessionSecret(normalizedSecret);
       router.replace("/player");
     } catch (err) {
       console.error("Failed to save session secret.", err);
@@ -45,18 +52,36 @@ export default function LoginScreen() {
       <Text style={styles.title}>Enter Secret</Text>
       <Text style={styles.subtitle}>Paste the 16-character secret to sync history.</Text>
 
-      <TextInput
-        style={styles.input}
-        value={secret}
-        onChangeText={(value) => {
-          setSecret(value.trim());
-          if (error) setError(null);
-        }}
-        autoCapitalize="none"
-        autoCorrect={false}
-        placeholder="e.g. OR8QqY-v_4XA64vx"
-        placeholderTextColor="#6B7280"
-      />
+      <View style={styles.inputRow}>
+        <TextInput
+          style={[styles.input, secret ? styles.inputWithButton : null]}
+          value={secret}
+          onChangeText={(value) => {
+            setSecret(value);
+            if (error) setError(null);
+          }}
+          onBlur={() => {
+            const trimmed = normalizeSecret(secret);
+            if (trimmed !== secret) setSecret(trimmed);
+          }}
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder="e.g. OR8QqY-v_4XA64vx"
+          placeholderTextColor="#6B7280"
+        />
+        {secret ? (
+          <Pressable
+            style={styles.clearButton}
+            onPress={() => {
+              setSecret("");
+              setError(null);
+            }}
+            accessibilityLabel="Clear secret input"
+          >
+            <Text style={styles.clearButtonText}>Clear</Text>
+          </Pressable>
+        ) : null}
+      </View>
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -90,12 +115,20 @@ const styles = StyleSheet.create({
     color: "#9CA3AF",
     marginBottom: 16,
   },
+  inputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
   input: {
     backgroundColor: "#111827",
     borderRadius: 10,
     padding: 12,
     color: "#F9FAFB",
-    marginBottom: 12,
+    flex: 1,
+  },
+  inputWithButton: {
+    marginRight: 8,
   },
   primaryButton: {
     backgroundColor: "#2563EB",
@@ -117,6 +150,16 @@ const styles = StyleSheet.create({
   },
   secondaryButtonText: {
     color: "#E5E7EB",
+    fontWeight: "600",
+  },
+  clearButton: {
+    backgroundColor: "#1F2937",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+  },
+  clearButtonText: {
+    color: "#F9FAFB",
     fontWeight: "600",
   },
   error: {

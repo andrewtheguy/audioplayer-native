@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import type { SessionStatus } from "@/hooks/useNostrSession";
+import type { HistoryEntry, HistoryPayload } from "@/lib/history";
 import { deriveNostrKeys } from "@/lib/nostr-crypto";
 import {
   loadHistoryFromNostr,
@@ -6,8 +7,7 @@ import {
   saveHistoryToNostr,
   subscribeToHistoryDetailed,
 } from "@/lib/nostr-sync";
-import type { HistoryEntry, HistoryPayload } from "@/lib/history";
-import type { SessionStatus } from "@/hooks/useNostrSession";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface UseNostrSyncOptions {
   history: HistoryEntry[];
@@ -318,19 +318,20 @@ export function useNostrSync({
           keys.privateKey,
           (payload: HistoryPayload) => {
             if (payload.sessionId && payload.sessionId === sessionId) return;
-            if (payload.timestamp <= latestTimestampRef.current) return;
 
-            latestTimestampRef.current = payload.timestamp;
-            if (Date.now() < ignoreRemoteUntilRef.current) return;
-            if (isLocalChangeRef.current) return;
+            const inGrace = Date.now() < ignoreRemoteUntilRef.current;
+            const isForeignSession = payload.sessionId && payload.sessionId !== sessionId;
 
-            if (payload.sessionId && payload.sessionId !== sessionId) {
-              if (sessionStatusRef.current === "active") {
-                sessionStatusRef.current = "stale";
-                setSessionStatusRef.current("stale");
-                setSessionNoticeRef.current("Another device is now active.");
-              }
+            if (isForeignSession && !inGrace && sessionStatusRef.current === "active") {
+              sessionStatusRef.current = "stale";
+              setSessionStatusRef.current("stale");
+              setSessionNoticeRef.current("Another device is now active.");
             }
+
+            if (payload.timestamp <= latestTimestampRef.current) return;
+            latestTimestampRef.current = payload.timestamp;
+            if (inGrace) return;
+            if (isLocalChangeRef.current) return;
 
             const result = mergeHistory(historyRef.current, payload.history);
             onHistoryLoadedRef.current(result.merged);

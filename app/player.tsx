@@ -1,3 +1,7 @@
+import { AudioPlayer, type AudioPlayerHandle } from "@/components/AudioPlayer";
+import type { SessionStatus } from "@/hooks/useNostrSession";
+import { clearSessionSecret, getSavedSessionSecret } from "@/lib/history";
+import { Redirect, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -8,10 +12,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { Redirect, useRouter } from "expo-router";
-import { AudioPlayer, type AudioPlayerHandle } from "@/components/AudioPlayer";
-import type { SessionStatus } from "@/hooks/useNostrSession";
-import { clearSessionSecret, getSavedSessionSecret } from "@/lib/history";
+import TrackPlayer from "react-native-track-player";
 
 export default function PlayerScreen() {
   const router = useRouter();
@@ -43,6 +44,14 @@ export default function PlayerScreen() {
   const handleLogout = async () => {
     setLogoutError(null);
     try {
+      // Stop any ongoing playback when logging out
+      try {
+        await TrackPlayer.stop();
+        await TrackPlayer.reset();
+      } catch {
+        // Ignore teardown failures on logout
+      }
+
       await clearSessionSecret();
       router.replace("/login");
     } catch (error) {

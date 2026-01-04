@@ -1,10 +1,12 @@
-import { forwardRef, useEffect, useImperativeHandle } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
-import { isValidSecret } from "@/lib/nostr-crypto";
-import type { HistoryEntry } from "@/lib/history";
-import { RELAYS } from "@/lib/nostr-sync";
-import { useNostrSync } from "@/hooks/useNostrSync";
 import type { SessionStatus } from "@/hooks/useNostrSession";
+import { useNostrSync } from "@/hooks/useNostrSync";
+import type { HistoryEntry } from "@/lib/history";
+import { isValidSecret } from "@/lib/nostr-crypto";
+import { RELAYS } from "@/lib/nostr-sync";
+import { sha256 } from "@noble/hashes/sha256";
+import { bytesToHex } from "@noble/hashes/utils";
+import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 interface NostrSessionApi {
   sessionStatus: SessionStatus;
@@ -35,6 +37,9 @@ interface NostrSyncPanelProps {
 
 export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelProps>(
   ({ secret, history, session, onHistoryLoaded, onTakeOver, onRemoteSync }, ref) => {
+  const [fingerprint, setFingerprint] = useState<string | null>(null);
+  const [fingerprintStatus, setFingerprintStatus] = useState<string | null>(null);
+
   const {
     status,
     message,
@@ -64,6 +69,32 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
       performInitialLoad(secret);
     }
   }, [secret, secretValid, session.sessionStatus, performInitialLoad]);
+
+  useEffect(() => {
+    if (!secret) {
+      setFingerprint(null);
+      setFingerprintStatus("No secret provided");
+      return;
+    }
+    if (!secretValid) {
+      setFingerprint(null);
+      setFingerprintStatus("Invalid secret");
+      return;
+    }
+
+    try {
+      const hash = sha256(new TextEncoder().encode(secret));
+      const hex = bytesToHex(hash).toUpperCase();
+      const raw = hex.slice(0, 16);
+      const formatted = `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}-${raw.slice(12, 16)}`;
+      setFingerprint(formatted);
+      setFingerprintStatus(null);
+    } catch (err) {
+      console.error("Failed to compute secret fingerprint", err);
+      setFingerprint(null);
+      setFingerprintStatus("Unable to compute fingerprint");
+    }
+  }, [secret, secretValid]);
 
   const handleStartSession = () => {
     if (isBusy) return;
@@ -104,17 +135,14 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
 
   return (
     <View style={styles.card}>
-      <Text style={styles.title}>Nostr Sync</Text>
-      <Text style={styles.meta}>Relays: {RELAYS.length}</Text>
-      <Text style={styles.meta}>Session: {session.sessionStatus}</Text>
-      {session.sessionNotice ? (
-        <Text style={styles.notice}>{session.sessionNotice}</Text>
-      ) : null}
-      {message ? <Text style={styles.message}>{message}</Text> : null}
+      <Text style={styles.title}>Details</Text>
 
-      {!secretValid ? (
-        <Text style={styles.notice}>Invalid secret. Please log in again.</Text>
-      ) : null}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Secret Fingerprint</Text>
+        <Text style={styles.meta}>
+          {fingerprint ?? fingerprintStatus ?? "Computing..."}
+        </Text>
+      </View>
 
       <View style={styles.row}>
         {session.sessionStatus === "idle" || session.sessionStatus === "unknown" ? (
@@ -148,6 +176,21 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
         ) : null}
       </View>
 
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Nostr Sync</Text>
+        <Text style={styles.meta}>Relays: {RELAYS.length}</Text>
+        <Text style={styles.meta}>Session: {session.sessionStatus}</Text>
+      </View>
+
+      {session.sessionNotice ? (
+        <Text style={styles.notice}>{session.sessionNotice}</Text>
+      ) : null}
+      {message ? <Text style={styles.message}>{message}</Text> : null}
+
+      {!secretValid ? (
+        <Text style={styles.notice}>Invalid secret. Please log in again.</Text>
+      ) : null}
+
       <Text style={styles.meta}>Status: {status}</Text>
     </View>
   );
@@ -163,6 +206,14 @@ const styles = StyleSheet.create({
   title: {
     color: "#F9FAFB",
     fontSize: 16,
+    fontWeight: "600",
+  },
+  section: {
+    marginTop: 10,
+  },
+  sectionTitle: {
+    color: "#E5E7EB",
+    fontSize: 14,
     fontWeight: "600",
   },
   meta: {

@@ -13,6 +13,7 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
+      "requireFullScreen": false,
       "bundleIdentifier": "com.andrewchen5678.audioplayer-native",
       "infoPlist": {
         "UIBackgroundModes": ["audio"]

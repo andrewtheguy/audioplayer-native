@@ -1,6 +1,8 @@
 # audioplayer-native
 
-A focused iOS audio player built with Expo. Stream audio URLs, keep a local listening history, and optionally sync history across devices using a 16-character secret over Nostr relays.
+A focused iOS audio player built with Expo. Stream audio URLs, keep a local listening history, and sync history across devices using a 16-character secret over Nostr relays.
+
+This native iOS app follows the architecture outlined in [audioplayer/docs/architecture.md](https://github.com/andrewtheguy/audioplayer/blob/main/docs/architecture.md). The web version of this audio player can be found in the [audioplayer repository](https://github.com/andrewtheguy/audioplayer).
 
 ## Features
 - Stream audio from a URL with play/pause, seek bar, and ±15s/+30s skips.
@@ -24,11 +26,22 @@ npm install
 npm run ios
 ```
 
+## Run on Mac (iPad on Mac / Mac Catalyst)
+This uses the iOS app bundle and runs it on macOS.
+
+1. Ensure iPad support is enabled (already in `app.json`).
+2. Open the Xcode workspace:
+```bash
+open ios/audioplayernative.xcworkspace
+```
+3. In Xcode, select the app target and enable **Mac (Designed for iPad)** or **Mac Catalyst** under **Signing & Capabilities** (Xcode version dependent).
+4. Choose **My Mac** as the run destination and build.
+
 ## Build a release IPA (local)
 ```bash
 # Generates a release build using Xcode
 npx expo prebuild -p ios
-open ios/audioplayer-native.xcworkspace
+open ios/audioplayernative.xcworkspace
 ```
 Then in Xcode:
 - **Product > Archive**
@@ -42,3 +55,4 @@ Then in Xcode:
 ## Notes
 - The secret grants access to the synced history. Treat it like a password.
 - iOS-only: `app.json` is configured for the iOS platform.
+- Patched dependencies are pinned to exact versions. If you bump `@react-native-community/slider` or `react-native-screens`, regenerate patches with `npx patch-package` and commit the updated files in `patches/`.

@@ -5,7 +5,15 @@ import type { HistoryEntry } from "@/lib/history";
 import { getHistory, saveHistory } from "@/lib/history";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import Slider from "@react-native-community/slider";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -63,9 +71,15 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     // Scrubbing state - when true, we show scrub position instead of actual position
     const [isScrubbing, setIsScrubbing] = useState(false);
     const [scrubPosition, setScrubPosition] = useState(0);
+    const [pendingSeekPosition, setPendingSeekPosition] = useState<number | null>(null);
+    const lastSeekAtRef = useRef(0);
+    const lastProgressAtRef = useRef(Date.now());
+    const lastProgressPosRef = useRef(0);
+    const [nowTick, setNowTick] = useState(Date.now());
+    const [viewOnlyPosition, setViewOnlyPosition] = useState<number | null>(null);
 
-    // TrackPlayer hooks for real-time updates (1 second interval to reduce re-renders)
-    const { position, duration } = useProgress(1000);
+    // TrackPlayer hooks for real-time updates
+    const { position, duration } = useProgress(200);
     const playbackState = usePlaybackState();
     const isPlaying = playbackState.state === State.Playing;
     const isLiveStream = !duration || duration === 0 || !Number.isFinite(duration);
@@ -133,10 +147,17 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       }
     }, []);
 
-    // Stop playback when session becomes inactive
+    // Stop and clear the player when session becomes inactive to avoid background audio
     useEffect(() => {
       if (session.sessionStatus === "active") return;
-      void TrackPlayer.stop().catch(() => {});
+      (async () => {
+        try {
+          await TrackPlayer.stop();
+          await TrackPlayer.reset();
+        } catch {
+          // Ignore cleanup failures
+        }
+      })();
     }, [session.sessionStatus]);
 
     const persistHistory = useCallback((next: HistoryEntry[]) => {
@@ -232,12 +253,18 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       [saveHistoryEntry, volume]
     );
 
-    const applyHistoryDisplay = useCallback((entry: HistoryEntry) => {
-      currentUrlRef.current = entry.url;
-      currentTitleRef.current = entry.title ?? null;
-      setNowPlayingUrl(entry.url);
-      setNowPlayingTitle(entry.title ?? null);
-    }, []);
+    const applyHistoryDisplay = useCallback(
+      (entry: HistoryEntry) => {
+        currentUrlRef.current = entry.url;
+        currentTitleRef.current = entry.title ?? null;
+        setNowPlayingUrl(entry.url);
+        setNowPlayingTitle(entry.title ?? null);
+        if (session.sessionStatus !== "active") {
+          setViewOnlyPosition(Number.isFinite(entry.position) ? Math.max(0, entry.position) : 0);
+        }
+      },
+      [session.sessionStatus]
+    );
 
     const loadFromHistory = useCallback(
       (entry: HistoryEntry, options?: { allowViewOnly?: boolean }) => {
@@ -268,12 +295,17 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         if (stored[0]) {
           applyHistoryDisplay(stored[0]);
         }
+        if (session.sessionStatus !== "active" && stored[0]) {
+          setViewOnlyPosition(
+            Number.isFinite(stored[0].position) ? Math.max(0, stored[0].position) : 0
+          );
+        }
       })();
 
       return () => {
         mounted = false;
       };
-    }, [applyHistoryDisplay]);
+    }, [applyHistoryDisplay, session.sessionStatus]);
 
     const loadStream = () => {
       if (isViewOnly) return;
@@ -309,6 +341,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const seekBy = async (deltaSeconds: number) => {
       if (isViewOnly || isLiveStreamRef.current) return;
       const next = Math.max(0, position + deltaSeconds);
+      setPendingSeekPosition(next);
+      lastSeekAtRef.current = Date.now();
       await seekTo(next);
     };
 
@@ -319,12 +353,25 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       }
     }, [isPlaying]);
 
+    // Track last progress sample to allow optimistic UI updates between TrackPlayer ticks
+    useEffect(() => {
+      lastProgressPosRef.current = position;
+      lastProgressAtRef.current = Date.now();
+    }, [position]);
+
+    // Lightweight timer to drive optimistic position updates
+    useEffect(() => {
+      const id = setInterval(() => setNowTick(Date.now()), 100);
+      return () => clearInterval(id);
+    }, []);
+
     const handleRemoteSync = async (remoteHistory: HistoryEntry[]) => {
       const entry = remoteHistory[0];
       if (!entry) return;
 
       if (isViewOnly) {
         applyHistoryDisplay(entry);
+        setViewOnlyPosition(Number.isFinite(entry.position) ? Math.max(0, entry.position) : 0);
         return;
       }
 
@@ -425,21 +472,65 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const handleSeekStart = () => {
       setIsScrubbing(true);
       setScrubPosition(position);
+      setPendingSeekPosition(null);
     };
 
     const handleSeekChange = (value: number) => {
       setScrubPosition(value);
+      setPendingSeekPosition(value);
+      lastSeekAtRef.current = Date.now();
     };
 
     const handleSeekComplete = async (value: number) => {
-      setIsScrubbing(false);
+      setScrubPosition(value);
+      setPendingSeekPosition(value);
+      lastSeekAtRef.current = Date.now();
       await seekTo(value);
+      setIsScrubbing(false);
     };
 
-    // Display position (scrub position while dragging, actual position otherwise)
-    const displayPosition = isScrubbing ? scrubPosition : position;
+    // Keep showing target position until TrackPlayer reports the new position to avoid UI snap-back
+    useEffect(() => {
+      if (pendingSeekPosition === null) return;
+      const age = Date.now() - lastSeekAtRef.current;
+      if (Math.abs(position - pendingSeekPosition) < 0.25 || age > 2000) {
+        setPendingSeekPosition(null);
+      }
+    }, [pendingSeekPosition, position]);
+
+    const optimisticPosition = useMemo(() => {
+      // Recompute every timer tick for smoother UI
+      void nowTick;
+
+      if (isScrubbing) return scrubPosition;
+      if (pendingSeekPosition !== null) return pendingSeekPosition;
+      if (isViewOnly) return viewOnlyPosition ?? position;
+      if (!isPlaying) return position;
+
+      const elapsedMs = Date.now() - lastProgressAtRef.current;
+      const elapsedSec = Math.max(0, elapsedMs) / 1000;
+      const estimate = lastProgressPosRef.current + elapsedSec;
+      const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : Number.POSITIVE_INFINITY;
+      return Math.min(estimate, safeDuration);
+    }, [
+      duration,
+      isPlaying,
+      isScrubbing,
+      isViewOnly,
+      nowTick,
+      pendingSeekPosition,
+      position,
+      scrubPosition,
+      viewOnlyPosition,
+    ]);
+
+    // Display position (scrub, then pending seek preview/optimistic, then live position)
+    const displayPosition = optimisticPosition;
 
     if (isViewOnly) {
+      const isLiveDisplay = false;
+      const viewOnlyDisplayPos = displayPosition;
+      const viewOnlyDuration = duration && Number.isFinite(duration) ? duration : null;
       return (
         <View style={styles.container}>
           <Text style={styles.heading}>Audio Player</Text>
@@ -449,7 +540,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               {nowPlayingTitle ?? nowPlayingUrl ?? "Nothing loaded"}
             </Text>
             <Text style={styles.meta}>
-              {formatTime(position)} / {formatTime(duration)} {isLiveStream ? "(Live)" : ""}
+              {formatTime(viewOnlyDisplayPos)} / {formatTime(viewOnlyDuration)} {isLiveDisplay ? "(Live)" : ""}
             </Text>
           </View>
 

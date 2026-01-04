@@ -1,8 +1,9 @@
-import "react-native-get-random-values";
-import "react-native-reanimated";
-import { useEffect, useState } from "react";
+import { PlaybackService } from "@/services/PlaybackService";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import { useEffect, useState } from "react";
+import "react-native-get-random-values";
+import "react-native-reanimated";
 import TrackPlayer, {
   AndroidAudioContentType,
   Capability,
@@ -10,7 +11,6 @@ import TrackPlayer, {
   IOSCategoryMode,
   IOSCategoryOptions,
 } from "react-native-track-player";
-import { PlaybackService } from "@/services/PlaybackService";
 
 // Register the playback service (must be done at module level)
 TrackPlayer.registerPlaybackService(() => PlaybackService);
@@ -35,17 +35,55 @@ async function configurePlayerOptions(): Promise<void> {
     compactCapabilities: [Capability.Play, Capability.Pause],
     forwardJumpInterval: 30,
     backwardJumpInterval: 15,
-    progressUpdateEventInterval: 1, // Update every 1 second (reduces CPU usage)
+    // Use TrackPlayer default progress update interval
+  });
+}
+
+async function teardownPlayer(): Promise<void> {
+  await TrackPlayer.stop().catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn("TrackPlayer stop failed during teardown.", { message, error });
+  });
+
+  await TrackPlayer.reset().catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn("TrackPlayer reset failed during teardown.", { message, error });
   });
 }
 
 async function setupPlayer(): Promise<boolean> {
+  let playbackState: Awaited<ReturnType<typeof TrackPlayer.getPlaybackState>> | null = null;
+
   try {
-    const existingState = await TrackPlayer.getState().catch(() => null);
-    if (existingState !== null) {
+    playbackState = await TrackPlayer.getPlaybackState();
+  } catch (stateError) {
+    const message = stateError instanceof Error ? stateError.message : String(stateError);
+    const stack = stateError instanceof Error ? stateError.stack : undefined;
+    console.warn("TrackPlayer getPlaybackState failed; assuming not initialized.", {
+      message,
+      stack,
+      error: stateError,
+    });
+  }
+
+  if (playbackState?.state !== undefined) {
+    try {
       await configurePlayerOptions();
       return true;
+    } catch (optionsError) {
+      const message = optionsError instanceof Error ? optionsError.message : String(optionsError);
+      const stack = optionsError instanceof Error ? optionsError.stack : undefined;
+      console.error("TrackPlayer options update failed on existing player.", {
+        message,
+        stack,
+        error: optionsError,
+      });
+      // Fall through to try a fresh setup if updating options fails
     }
+  }
+
+  try {
+    await teardownPlayer();
 
     await TrackPlayer.setupPlayer({
       iosCategory: IOSCategory.Playback,
@@ -57,12 +95,6 @@ async function setupPlayer(): Promise<boolean> {
       ],
       androidAudioContentType: AndroidAudioContentType.Music,
       autoHandleInterruptions: true,
-      waitForBuffer: true,
-      // Buffer configuration to reduce jitter
-      minBuffer: 15, // 15 seconds minimum buffer
-      maxBuffer: 300, // 5 minutes max buffer
-      playBuffer: 2.5, // Start playback after 2.5 seconds buffered
-      backBuffer: 30, // Keep 30 seconds behind current position
     });
     await configurePlayerOptions();
     return true;

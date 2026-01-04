@@ -1,0 +1,49 @@
+diff --git a/node_modules/@react-native-community/slider/ios/RNCSlider.h b/node_modules/@react-native-community/slider/ios/RNCSlider.h
+index 570ec53..8d00a80 100644
+--- a/node_modules/@react-native-community/slider/ios/RNCSlider.h
++++ b/node_modules/@react-native-community/slider/ios/RNCSlider.h
+@@ -10,7 +10,7 @@
+ 
+ @property (nonatomic, assign) float step;
+ @property (nonatomic, assign) float lastValue;
+-@property (nonatomic, assign) bool isSliding;
++@property (nonatomic, assign) BOOL isSliding;
+ 
+ @property (nonatomic, assign) float lowerLimit;
+ @property (nonatomic, assign) float upperLimit;
+@@ -19,11 +19,11 @@
+ @property (nonatomic, strong) UIImage *minimumTrackImage;
+ @property (nonatomic, strong) UIImage *maximumTrackImage;
+ @property (nonatomic, strong) UIImage *thumbImage;
+-@property (nonatomic, assign) bool tapToSeek;
++@property (nonatomic, assign) BOOL tapToSeek;
+ @property (nonatomic, strong) NSString *accessibilityUnits;
+ @property (nonatomic, strong) NSArray *accessibilityIncrements;
+ 
+ - (float) discreteValue:(float)value;
+-- (void) setDisabled:(bool)disabled;
++- (void) setDisabled:(BOOL)disabled;
+ 
+ @end
+diff --git a/node_modules/@react-native-community/slider/ios/RNCSliderComponentView.h b/node_modules/@react-native-community/slider/ios/RNCSliderComponentView.h
+index ce91532..f5e675e 100644
+--- a/node_modules/@react-native-community/slider/ios/RNCSliderComponentView.h
++++ b/node_modules/@react-native-community/slider/ios/RNCSliderComponentView.h
+@@ -15,7 +15,7 @@ typedef void (^RNCLoadImageFailureBlock)();
+ 
+ @property (nonatomic, assign) float step;
+ @property (nonatomic, assign) float lastValue;
+-@property (nonatomic, assign) bool isSliding;
++@property (nonatomic, assign) BOOL isSliding;
+ 
+ @property (nonatomic, assign) float lowerLimit;
+ @property (nonatomic, assign) float upperLimit;
+@@ -24,7 +24,7 @@ typedef void (^RNCLoadImageFailureBlock)();
+ @property (nonatomic, strong) UIImage *minimumTrackImage;
+ @property (nonatomic, strong) UIImage *maximumTrackImage;
+ @property (nonatomic, strong) UIImage *thumbImage;
+-@property (nonatomic, assign) bool tapToSeek;
++@property (nonatomic, assign) BOOL tapToSeek;
+ @property (nonatomic, strong) NSString *accessibilityUnits;
+ @property (nonatomic, strong) NSArray *accessibilityIncrements;
+ 
