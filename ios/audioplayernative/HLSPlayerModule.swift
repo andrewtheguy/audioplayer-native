@@ -111,7 +111,7 @@ class HLSPlayerModule: RCTEventEmitter {
   }
 
   @objc
-  func seekTo(_ position: NSNumber, resolver resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+  func seekTo(_ position: NSNumber, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
     guard let player = player else {
       resolve(nil)
       return
@@ -144,7 +144,12 @@ class HLSPlayerModule: RCTEventEmitter {
   private func configureAudioSession() {
     let audioSession = AVAudioSession.sharedInstance()
     do {
-      try audioSession.setCategory(.playback, mode: .default, policy: .longFormAudio, options: [.allowBluetooth, .allowAirPlay])
+      try audioSession.setCategory(
+        .playback,
+        mode: .default,
+        policy: .longFormAudio,
+        options: [.allowBluetoothA2DP, .allowAirPlay]
+      )
       try audioSession.setActive(true)
     } catch {
       sendEvent(withName: "playback-error", body: ["message": "Audio session error", "detail": error.localizedDescription])
