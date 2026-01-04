@@ -26,11 +26,22 @@ npm install
 npm run ios
 ```
 
+## Run on Mac (iPad on Mac / Mac Catalyst)
+This uses the iOS app bundle and runs it on macOS.
+
+1. Ensure iPad support is enabled (already in `app.json`).
+2. Open the Xcode workspace:
+```bash
+open ios/audioplayernative.xcworkspace
+```
+3. In Xcode, select the app target and enable **Mac (Designed for iPad)** or **Mac Catalyst** under **Signing & Capabilities** (Xcode version dependent).
+4. Choose **My Mac** as the run destination and build.
+
 ## Build a release IPA (local)
 ```bash
 # Generates a release build using Xcode
 npx expo prebuild -p ios
-open ios/audioplayer-native.xcworkspace
+open ios/audioplayernative.xcworkspace
 ```
 Then in Xcode:
 - **Product > Archive**
