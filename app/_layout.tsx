@@ -5,7 +5,6 @@ import { useEffect, useState } from "react";
 import "react-native-get-random-values";
 import "react-native-reanimated";
 import TrackPlayer, {
-  AndroidAudioContentType,
   Capability,
   IOSCategory,
   IOSCategoryMode,
@@ -31,6 +30,8 @@ async function configurePlayerOptions(): Promise<void> {
       Capability.SeekTo,
       Capability.JumpForward,
       Capability.JumpBackward,
+      Capability.SkipToNext,
+      Capability.SkipToPrevious,
     ],
     compactCapabilities: [Capability.Play, Capability.Pause],
     forwardJumpInterval: 30,
@@ -93,7 +94,6 @@ async function setupPlayer(): Promise<boolean> {
         IOSCategoryOptions.AllowBluetooth,
         IOSCategoryOptions.AllowBluetoothA2DP,
       ],
-      androidAudioContentType: AndroidAudioContentType.Music,
       autoHandleInterruptions: true,
     });
     await configurePlayerOptions();
