@@ -2,6 +2,7 @@ import { PlaybackService } from "@/services/PlaybackService";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
+import { AppState } from "react-native";
 import "react-native-get-random-values";
 import "react-native-reanimated";
 import TrackPlayer, {
@@ -112,7 +113,19 @@ export default function RootLayout() {
 
     return () => {
       mounted = false;
-      void teardownPlayer();
+    };
+  }, []);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      // Tear down the global player when the app is backgrounded/exiting
+      if (state === "background" || state === "inactive") {
+        void teardownPlayer();
+      }
+    });
+
+    return () => {
+      subscription.remove();
     };
   }, []);
 
