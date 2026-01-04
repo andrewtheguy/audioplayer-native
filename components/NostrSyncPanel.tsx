@@ -144,21 +144,6 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
         </Text>
       </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Nostr Sync</Text>
-        <Text style={styles.meta}>Relays: {RELAYS.length}</Text>
-        <Text style={styles.meta}>Session: {session.sessionStatus}</Text>
-      </View>
-
-      {session.sessionNotice ? (
-        <Text style={styles.notice}>{session.sessionNotice}</Text>
-      ) : null}
-      {message ? <Text style={styles.message}>{message}</Text> : null}
-
-      {!secretValid ? (
-        <Text style={styles.notice}>Invalid secret. Please log in again.</Text>
-      ) : null}
-
       <View style={styles.row}>
         {session.sessionStatus === "idle" || session.sessionStatus === "unknown" ? (
           <Pressable
@@ -190,6 +175,21 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
           </Pressable>
         ) : null}
       </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Nostr Sync</Text>
+        <Text style={styles.meta}>Relays: {RELAYS.length}</Text>
+        <Text style={styles.meta}>Session: {session.sessionStatus}</Text>
+      </View>
+
+      {session.sessionNotice ? (
+        <Text style={styles.notice}>{session.sessionNotice}</Text>
+      ) : null}
+      {message ? <Text style={styles.message}>{message}</Text> : null}
+
+      {!secretValid ? (
+        <Text style={styles.notice}>Invalid secret. Please log in again.</Text>
+      ) : null}
 
       <Text style={styles.meta}>Status: {status}</Text>
     </View>
