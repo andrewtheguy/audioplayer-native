@@ -87,7 +87,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     initialize()
     player?.play()
     updateNowPlayingState(isPlaying: true)
-    // State emission handled by mediaPlayerStateChanged delegate
+    sendPlaybackState("playing")
     resolve(nil)
   }
 
@@ -95,7 +95,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   func pause(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
     player?.pause()
     updateNowPlayingState(isPlaying: false)
-    // State emission handled by mediaPlayerStateChanged delegate
+    sendPlaybackState("paused")
     resolve(nil)
   }
 
@@ -104,7 +104,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     player?.stop()
     seekTo(NSNumber(value: 0), resolver: { _ in }, rejecter: { _, _, _ in })
     updateNowPlayingState(isPlaying: false)
-    // State emission handled by mediaPlayerStateChanged delegate
+    sendPlaybackState("stopped")
     resolve(nil)
   }
 
