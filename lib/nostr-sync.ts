@@ -1,14 +1,15 @@
-import { finalizeEvent } from "nostr-tools/pure";
-import { SimplePool } from "nostr-tools/pool";
 import type { HistoryEntry, HistoryPayload } from "@/lib/history";
-import { encryptHistory, decryptHistory } from "@/lib/nostr-crypto";
+import { decryptHistory, encryptHistory } from "@/lib/nostr-crypto";
+import { SimplePool } from "nostr-tools/pool";
+import { finalizeEvent } from "nostr-tools/pure";
 
 export const RELAYS = [
-  "wss://nos.lol",
-  "wss://relay.nostr.band",
-  "wss://relay.nostr.net",
-  "wss://relay.primal.net",
-  "wss://relay.snort.social",
+    "wss://nos.lol",
+    //"wss://relay.damus.io", // acceptable for index queries; not recommended for high-volume operations due to rate limiting
+    //"wss://relay.nostr.band",
+    "wss://relay.nostr.net",
+    "wss://relay.primal.net",
+    "wss://relay.snort.social",
 ];
 
 const KIND_HISTORY = 30078;
