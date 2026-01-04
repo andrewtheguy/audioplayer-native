@@ -691,7 +691,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             <Text style={styles.nowPlayingTitle}>Nothing loaded</Text>
           )}
           <View style={styles.seekRow}>
-            <Text style={styles.meta}>{formatTime(displayPosition)}</Text>
+            {isLiveStream ? <View style={styles.seekPlaceholder} /> : (
+              <Text style={styles.meta}>{formatTime(displayPosition)}</Text>
+            )}
             <Text style={styles.meta}>{isLiveStream ? "Live" : formatTime(duration)}</Text>
           </View>
 
@@ -883,6 +885,9 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginTop: 8,
+  },
+  seekPlaceholder: {
+    width: 1,
   },
   slider: {
     width: "100%",
