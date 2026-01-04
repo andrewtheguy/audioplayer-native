@@ -84,6 +84,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const effectivePlaybackState = playbackOverride ?? playbackState.state;
     const isPlaying =
       effectivePlaybackState === State.Playing || effectivePlaybackState === State.Buffering;
+    const effectiveStateLabel = State[effectivePlaybackState] ?? "Unknown";
+    const nativeStateLabel = State[playbackState.state] ?? "Unknown";
+    const overrideStateLabel = playbackOverride !== null ? State[playbackOverride] ?? null : null;
 
     const currentUrlRef = useRef<string | null>(null);
     const currentTitleRef = useRef<string | null>(null);
@@ -695,6 +698,11 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               <Text style={styles.nowPlayingUrl} numberOfLines={1}>
                 {nowPlayingUrl}
               </Text>
+              <Text style={styles.debugMeta}>
+                State: {effectiveStateLabel} (native: {nativeStateLabel}
+                {overrideStateLabel ? `, override: ${overrideStateLabel}` : ""}
+                ){isLiveStream ? " [live]" : ""}
+              </Text>
             </>
           ) : (
             <Text style={styles.nowPlayingTitle}>Nothing loaded</Text>
@@ -908,6 +916,11 @@ const styles = StyleSheet.create({
   meta: {
     color: "#9CA3AF",
     marginTop: 6,
+  },
+  debugMeta: {
+    color: "#9CA3AF",
+    marginTop: 4,
+    fontSize: 12,
   },
   error: {
     color: "#FCA5A5",
