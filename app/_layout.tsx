@@ -40,24 +40,50 @@ async function configurePlayerOptions(): Promise<void> {
 }
 
 async function teardownPlayer(): Promise<void> {
-  try {
-    await TrackPlayer.stop();
-    await TrackPlayer.reset();
-  } catch {
-    // Ignore teardown failures
-  }
+  await TrackPlayer.stop().catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn("TrackPlayer stop failed during teardown.", { message, error });
+  });
+
+  await TrackPlayer.reset().catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn("TrackPlayer reset failed during teardown.", { message, error });
+  });
 }
 
 async function setupPlayer(): Promise<boolean> {
-  try {
-    // Clear any lingering playback from prior sessions/reloads
-    await teardownPlayer();
+  let playbackState: Awaited<ReturnType<typeof TrackPlayer.getPlaybackState>> | null = null;
 
-    const existingState = await TrackPlayer.getPlaybackState().catch(() => null);
-    if (existingState !== null && existingState.state !== undefined) {
+  try {
+    playbackState = await TrackPlayer.getPlaybackState();
+  } catch (stateError) {
+    const message = stateError instanceof Error ? stateError.message : String(stateError);
+    const stack = stateError instanceof Error ? stateError.stack : undefined;
+    console.warn("TrackPlayer getPlaybackState failed; assuming not initialized.", {
+      message,
+      stack,
+      error: stateError,
+    });
+  }
+
+  if (playbackState?.state !== undefined) {
+    try {
       await configurePlayerOptions();
       return true;
+    } catch (optionsError) {
+      const message = optionsError instanceof Error ? optionsError.message : String(optionsError);
+      const stack = optionsError instanceof Error ? optionsError.stack : undefined;
+      console.error("TrackPlayer options update failed on existing player.", {
+        message,
+        stack,
+        error: optionsError,
+      });
+      // Fall through to try a fresh setup if updating options fails
     }
+  }
+
+  try {
+    await teardownPlayer();
 
     await TrackPlayer.setupPlayer({
       iosCategory: IOSCategory.Playback,
