@@ -8,6 +8,7 @@ import {
   subscribeToHistoryDetailed,
 } from "@/lib/nostr-sync";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AppState, type AppStateStatus } from "react-native";
 
 interface UseNostrSyncOptions {
   history: HistoryEntry[];
@@ -59,6 +60,7 @@ export function useNostrSync({
     "idle"
   );
   const [message, setMessage] = useState<string | null>(null);
+  const [appState, setAppState] = useState<AppStateStatus>(AppState.currentState);
 
   const historyRef = useRef(history);
   const onHistoryLoadedRef = useRef(onHistoryLoaded);
@@ -305,6 +307,8 @@ export function useNostrSync({
 
   useEffect(() => {
     if (!secret) return;
+    if (sessionStatus === "invalid") return;
+    if (appState !== "active") return;
 
     let cleanup: (() => void) | null = null;
     let cancelled = false;
@@ -347,7 +351,20 @@ export function useNostrSync({
       cancelled = true;
       cleanup?.();
     };
-  }, [secret, sessionId]);
+  }, [secret, sessionId, appState, sessionStatus]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      setAppState(nextState);
+      if (nextState === "active" && secret && sessionStatus !== "invalid") {
+        performLoad(secret, false, true);
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [performLoad, secret, sessionStatus]);
 
   useEffect(() => {
     if (!secret) return;
