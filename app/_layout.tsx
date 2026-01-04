@@ -39,8 +39,23 @@ async function configurePlayerOptions(): Promise<void> {
   });
 }
 
+async function teardownPlayer(): Promise<void> {
+  try {
+    await TrackPlayer.stop();
+    await TrackPlayer.reset();
+    if (typeof TrackPlayer.destroy === "function") {
+      await TrackPlayer.destroy();
+    }
+  } catch {
+    // Ignore teardown failures
+  }
+}
+
 async function setupPlayer(): Promise<boolean> {
   try {
+    // Clear any lingering playback from prior sessions/reloads
+    await teardownPlayer();
+
     const existingState = await TrackPlayer.getState().catch(() => null);
     if (existingState !== null) {
       await configurePlayerOptions();
@@ -100,6 +115,7 @@ export default function RootLayout() {
 
     return () => {
       mounted = false;
+      void teardownPlayer();
     };
   }, []);
 
