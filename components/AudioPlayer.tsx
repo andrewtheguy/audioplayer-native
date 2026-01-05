@@ -292,6 +292,11 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
           // Seek to start position if provided
           const startPosition = options?.startPosition ?? null;
+          if (Number.isFinite(startPosition) && (startPosition as number) > 0) {
+            expectedResumeRef.current = startPosition as number;
+          } else {
+            expectedResumeRef.current = 0;
+          }
           if (startPosition !== null && Number.isFinite(startPosition) && startPosition > 0) {
             await TrackPlayer.seekTo(startPosition);
           }
