@@ -213,14 +213,9 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
       // Silent preload: mute audio, play briefly to trigger start-time positioning, then pause
       mediaPlayer.audio?.isMuted = true
       mediaPlayer.play()
-
-      // Pause after a short delay (pause() doesn't work if called too quickly after play())
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-        guard let self = self, self.isPreloading else { return }
-        self.player?.pause()
-        // Keep muted - will unmute when user explicitly plays
-        self.sendPlaybackState("paused")
-      }
+      mediaPlayer.pause()
+      // isPreloading remains true to suppress position events until user plays
+      // Keep muted - will unmute when user explicitly plays
     }
 
     resolver(nil)
@@ -309,14 +304,9 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
         // Silent preload: mute audio, play briefly to trigger start-time positioning, then pause
         mediaPlayer.audio?.isMuted = true
         mediaPlayer.play()
-
-        // Pause after a short delay (pause() doesn't work if called too quickly after play())
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-          guard let self = self, self.isPreloading else { return }
-          self.player?.pause()
-          // Keep muted - will unmute when user explicitly plays
-          self.sendPlaybackState("paused")
-        }
+        mediaPlayer.pause()
+        // isPreloading remains true to suppress position events until user plays
+        // Keep muted - will unmute when user explicitly plays
       }
 
       // Clean up probe state
@@ -508,7 +498,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   }
 
   private func emitPeriodicPosition() {
-    guard let player = player, player.isPlaying, !isSeeking else { return }
+    guard let player = player, player.isPlaying, !isSeeking, !isPreloading else { return }
 
     let position = safePosition()
     let duration = safeDuration()
@@ -795,6 +785,11 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   }
 
   func mediaPlayerTimeChanged(_ aNotification: Notification) {
+    // During preload, suppress all position events to keep showing the target position
+    if isPreloading {
+      return
+    }
+
     let rawPosition = safePosition()
     let duration = safeDuration()
 
