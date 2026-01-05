@@ -164,17 +164,15 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   private func configurePlayerWithMedia(_ media: VLCMedia, title: String?, urlString: String, autoplay: Bool, resolver: @escaping RCTPromiseResolveBlock) {
     // pendingStartPosition is kept for emitStreamReady() to seek after stream loads
     var startPosition: Double = 0
-    var needsPreload = false
 
     if let startPos = pendingStartPosition, startPos > 0 {
       startPosition = startPos
+      preloadTargetPosition = startPos
+    }
 
-      // If not autoplaying, we need to do a silent preload to load the stream
-      needsPreload = !autoplay
-      if needsPreload {
-        isPreloading = true
-        preloadTargetPosition = startPos
-      }
+    // If not autoplaying, we need to do a silent preload to initialize the stream
+    if !autoplay {
+      isPreloading = true
     }
 
     // Emit playback-progress immediately so UI shows the correct initial position
@@ -210,8 +208,9 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
       mediaPlayer.play()
       updateNowPlayingState(isPlaying: true)
       sendPlaybackState("playing")
-    } else if needsPreload {
-      // Silent preload: mute audio, play briefly to trigger start-time positioning, then pause
+    } else {
+      // Silent preload: mute audio, play briefly to initialize stream, then pause
+      // This ensures VLC opens the media so it's ready when user presses play
       mediaPlayer.audio?.isMuted = true
       mediaPlayer.play()
       mediaPlayer.pause()
