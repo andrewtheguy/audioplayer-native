@@ -391,7 +391,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     };
 
     const handleJumpBackward = async () => {
-      if (isLiveStream) return;
+      if (isLiveStreamRef.current) return;
       try {
         await TrackPlayer.jumpBackward();
       } catch (err) {
@@ -400,7 +400,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     };
 
     const handleJumpForward = async () => {
-      if (isLiveStream) return;
+      if (isLiveStreamRef.current) return;
       try {
         await TrackPlayer.jumpForward();
       } catch (err) {
@@ -518,18 +518,18 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     // Seek slider handlers
     const handleSeekStart = () => {
-      if (isLiveStream) return;
+      if (isLiveStreamRef.current) return;
       setIsScrubbing(true);
       setScrubPosition(displayPosition);
     };
 
     const handleSeekChange = (value: number) => {
-      if (isLiveStream) return;
+      if (isLiveStreamRef.current) return;
       setScrubPosition(value);
     };
 
     const handleSeekComplete = async (value: number) => {
-      if (isLiveStream) return;
+      if (isLiveStreamRef.current) return;
       setScrubPosition(value);
       await seekTo(value);
       setIsScrubbing(false);

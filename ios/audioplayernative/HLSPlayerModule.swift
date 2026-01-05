@@ -25,6 +25,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   private var pendingStartPosition: Double? = nil
   private var pendingAutoplay: Bool = false
   private var hasEmittedStreamReady = false
+  private var hasEmittedStreamInfo = false
 
   // Probed stream info (from AVURLAsset, fallback to VLC for unsupported formats)
   private var probedIsLive: Bool = false
@@ -112,6 +113,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     }
     self.pendingAutoplay = autoplay
     self.hasEmittedStreamReady = false
+    self.hasEmittedStreamInfo = false
 
     // Try AVURLAsset first (more reliable for HLS)
     let asset = AVURLAsset(url: url)
@@ -359,6 +361,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     pendingStartPosition = nil
     pendingAutoplay = false
     hasEmittedStreamReady = false
+    hasEmittedStreamInfo = false
     isPreloading = false
     preloadTargetPosition = 0
     nowPlayingInfo = [:]
@@ -868,7 +871,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
     // Once we get a valid duration, update Now Playing
     // Trust probedIsLive - VLC may report duration for live streams
-    if !hasValidDuration && duration > 0 {
+    if !hasValidDuration && !hasEmittedStreamInfo && duration > 0 {
+      hasEmittedStreamInfo = true
       if probedIsLive {
         // Live stream with sliding-window duration - keep live semantics
         sendEvent(withName: "stream-info", body: [
