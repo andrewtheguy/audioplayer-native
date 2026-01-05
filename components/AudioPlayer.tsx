@@ -63,6 +63,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const [showUrlInput, setShowUrlInput] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [editingTitleValue, setEditingTitleValue] = useState("");
+    const [editingTimeUrl, setEditingTimeUrl] = useState<string | null>(null);
+    const [editingTimeValue, setEditingTimeValue] = useState("");
 
     // Scrubbing state - when true, we show scrub position instead of actual position
     const [isScrubbing, setIsScrubbing] = useState(false);
@@ -97,6 +99,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const currentTitleRef = useRef<string | null>(null);
     const lastAutoSaveAtRef = useRef(0);
     const isLiveStreamRef = useRef(false);
+    const expectedResumeRef = useRef(0);
 
     const session = useNostrSession({
       secret,
@@ -112,12 +115,14 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     useEffect(() => {
       if (playbackState.state !== State.Stopped) return;
+      // Preserve pending seek when we're intentionally rehydrating/auto-seeking after a history click
+      if (pendingSeekPosition !== null) return;
       setPendingSeekPosition(null);
       setScrubPosition(0);
       setIsScrubbing(false);
       lastProgressPosRef.current = 0;
       lastProgressAtRef.current = Date.now();
-    }, [playbackState.state]);
+    }, [playbackState.state, pendingSeekPosition]);
 
 
     useImperativeHandle(ref, () => ({
@@ -240,6 +245,12 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       if (!isPlaying || isViewOnly || isLiveStreamRef.current) return;
       if (!currentUrlRef.current) return;
 
+      const expected = expectedResumeRef.current;
+      if (expected > 0 && position < expected - 0.5) return;
+      if (expected > 0 && position >= expected - 0.5) {
+        expectedResumeRef.current = 0;
+      }
+
       if (Date.now() - lastAutoSaveAtRef.current >= 5000) {
         lastAutoSaveAtRef.current = Date.now();
         saveHistoryEntry(position);
@@ -322,6 +333,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         }
 
         const start = Number.isFinite(entry.position) ? Math.max(0, entry.position) : 0;
+        expectedResumeRef.current = start;
 
         // Optimistically reflect the saved position in UI before VLC reports progress
         setPendingSeekPosition(start > 0 ? start : null);
@@ -527,6 +539,46 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       });
       setIsEditingTitle(false);
       setEditingTitleValue("");
+    };
+
+    const startEditingTime = (entry: HistoryEntry) => {
+      if (isViewOnly) return;
+      setEditingTimeUrl(entry.url);
+      setEditingTimeValue(Number.isFinite(entry.position) ? Math.max(0, entry.position).toString() : "0");
+      setError(null);
+    };
+
+    const cancelEditingTime = () => {
+      setEditingTimeUrl(null);
+      setEditingTimeValue("");
+    };
+
+    const saveEditingTime = () => {
+      if (isViewOnly || !editingTimeUrl) return;
+      const seconds = Number(editingTimeValue);
+      if (!Number.isFinite(seconds) || seconds < 0) {
+        setError("Enter a valid time in seconds");
+        return;
+      }
+      const clamped = Math.max(0, seconds);
+
+      setHistory((prev) => {
+        const next = prev.map((entry) =>
+          entry.url === editingTimeUrl ? { ...entry, position: clamped } : entry
+        );
+        void saveHistory(next);
+        return next;
+      });
+
+      if (currentUrlRef.current === editingTimeUrl) {
+        setPendingSeekPosition(clamped);
+        setScrubPosition(clamped);
+        lastProgressPosRef.current = clamped;
+        lastProgressAtRef.current = Date.now();
+      }
+
+      setEditingTimeUrl(null);
+      setEditingTimeValue("");
     };
 
     // Seek slider handlers
@@ -827,27 +879,68 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             {history.length === 0 ? (
               <Text style={styles.meta}>No history yet.</Text>
             ) : (
-              history.map((entry) => (
-                <View key={entry.url} style={styles.historyItem}>
-                  <Pressable
-                    style={styles.historyContent}
-                    onPress={() => loadFromHistory(entry, { autoPlay: true })}
-                    disabled={isViewOnly}
-                  >
-                    <Text style={styles.historyTitle}>{entry.title || "Untitled"}</Text>
-                    <Text style={styles.historyUrl} numberOfLines={1}>{entry.url}</Text>
-                    <Text style={styles.historyMeta}>{formatTime(entry.position)}</Text>
-                  </Pressable>
-                  {!isViewOnly && (
-                    <Pressable
-                      style={styles.removeButton}
-                      onPress={() => handleRemoveFromHistory(entry.url, entry.title)}
-                    >
-                      <MaterialIcons name="close" size={18} color="#9CA3AF" />
-                    </Pressable>
-                  )}
-                </View>
-              ))
+              history.map((entry) => {
+                const isEditingTime = editingTimeUrl === entry.url;
+                return (
+                  <View key={entry.url} style={styles.historyItem}>
+                    {isEditingTime ? (
+                      <View style={styles.historyContent}>
+                        <Text style={styles.historyTitle}>{entry.title || "Untitled"}</Text>
+                        <Text style={styles.historyUrl} numberOfLines={1}>{entry.url}</Text>
+                        <View style={styles.editTimestampRow}>
+                          <TextInput
+                            style={styles.editTimestampInput}
+                            value={editingTimeValue}
+                            onChangeText={setEditingTimeValue}
+                            keyboardType="numeric"
+                            placeholder="Seconds"
+                            placeholderTextColor="#6B7280"
+                          />
+                          <Pressable style={styles.saveButton} onPress={saveEditingTime}>
+                            <MaterialIcons name="check" size={18} color="#10B981" />
+                          </Pressable>
+                          <Pressable style={styles.cancelEditButton} onPress={cancelEditingTime}>
+                            <MaterialIcons name="close" size={18} color="#9CA3AF" />
+                          </Pressable>
+                        </View>
+                        <Text style={styles.historyMeta}>Saved: {formatTime(entry.position)}</Text>
+                      </View>
+                    ) : (
+                      <Pressable
+                        style={styles.historyContent}
+                        onPress={() => loadFromHistory(entry, { autoPlay: true })}
+                        disabled={isViewOnly}
+                      >
+                        <Text style={styles.historyTitle}>{entry.title || "Untitled"}</Text>
+                        <Text style={styles.historyUrl} numberOfLines={1}>{entry.url}</Text>
+                        <View style={styles.rowBetween}>
+                          <Text style={styles.historyMeta}>{formatTime(entry.position)}</Text>
+                          {!isViewOnly && (
+                            <Pressable
+                              style={styles.editButton}
+                              onPress={(e) => {
+                                e?.stopPropagation?.();
+                                startEditingTime(entry);
+                              }}
+                            >
+                              <MaterialIcons name="schedule" size={16} color="#9CA3AF" />
+                            </Pressable>
+                          )}
+                        </View>
+                      </Pressable>
+                    )}
+
+                    {!isViewOnly && (
+                      <Pressable
+                        style={styles.removeButton}
+                        onPress={() => handleRemoveFromHistory(entry.url, entry.title)}
+                      >
+                        <MaterialIcons name="close" size={18} color="#9CA3AF" />
+                      </Pressable>
+                    )}
+                  </View>
+                );
+              })
             )}
           </ScrollView>
         </View>
@@ -1067,6 +1160,20 @@ const styles = StyleSheet.create({
     padding: 10,
     color: "#F9FAFB",
     fontSize: 16,
+  },
+  editTimestampRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 8,
+  },
+  editTimestampInput: {
+    flex: 1,
+    backgroundColor: "#111827",
+    borderRadius: 8,
+    padding: 10,
+    color: "#F9FAFB",
+    fontSize: 14,
   },
   saveButton: {
     padding: 8,
