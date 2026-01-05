@@ -148,9 +148,37 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
   // Helper to set up VLC player after probing completes
   private func setupVLCPlayer(url: URL, title: String?, urlString: String, autoplay: Bool, resolver: @escaping RCTPromiseResolveBlock) {
+    let media = VLCMedia(url: url)
+
+    // Use VLC's start-time option for cleaner initial positioning
+    var startPosition: Double = 0
+    if let startPos = self.pendingStartPosition, startPos > 0 {
+      media.addOption("start-time=\(startPos)")
+      startPosition = startPos
+      self.pendingStartPosition = nil
+    }
+
+    // Emit stream-ready with start position
+    self.hasEmittedStreamReady = true
+    self.sendEvent(withName: "stream-ready", body: [
+      "position": startPosition,
+      "duration": self.probedDuration,
+      "isLive": self.probedIsLive
+    ])
+
+    // Also emit playback-progress so UI shows the correct initial position
+    if startPosition > 0 {
+      self.lastStablePosition = startPosition
+      self.sendEvent(withName: "playback-progress", body: [
+        "position": startPosition,
+        "duration": self.probedDuration,
+        "seeking": false
+      ])
+    }
+
     let mediaPlayer = VLCMediaPlayer()
     mediaPlayer.delegate = self
-    mediaPlayer.media = VLCMedia(url: url)
+    mediaPlayer.media = media
 
     self.player = mediaPlayer
     self.hasValidDuration = !self.probedIsLive && self.probedDuration > 0
@@ -160,24 +188,6 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
       self.nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = self.probedDuration
     }
     self.updateNowPlaying(title: title ?? "Stream", url: urlString, duration: self.probedDuration > 0 ? self.probedDuration : nil)
-
-    // Emit stream-ready immediately after probe
-    self.hasEmittedStreamReady = true
-    self.sendEvent(withName: "stream-ready", body: [
-      "position": 0,
-      "duration": self.probedDuration,
-      "isLive": self.probedIsLive
-    ])
-
-    // Handle pending start position
-    if let startPos = self.pendingStartPosition, startPos > 0 {
-      self.pendingStartPosition = nil
-      self.seekTargetPosition = startPos
-      self.isSeeking = true
-      self.seekRetryCount = 0
-      self.seekTimeoutCounter = 0
-      self.sendEvent(withName: "seek-started", body: ["targetPosition": startPos])
-    }
 
     // Handle autoplay
     if autoplay {
@@ -215,6 +225,15 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
       guard let resolver = self.probeResolver,
             let urlString = self.probeUrlString else { return }
 
+      // Use VLC's start-time option for cleaner initial positioning (must be set before assigning to player)
+      let shouldAutoplay = self.pendingAutoplay
+      var startPosition: Double = 0
+      if let startPos = self.pendingStartPosition, startPos > 0 {
+        aMedia.addOption("start-time=\(startPos)")
+        startPosition = startPos
+        self.pendingStartPosition = nil
+      }
+
       let mediaPlayer = VLCMediaPlayer()
       mediaPlayer.delegate = self
       mediaPlayer.media = aMedia
@@ -228,26 +247,26 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
       }
       self.updateNowPlaying(title: self.probeTitle ?? "Stream", url: urlString, duration: self.probedDuration > 0 ? self.probedDuration : nil)
 
-      // Emit stream-ready
+      // Emit stream-ready with start position
       self.hasEmittedStreamReady = true
       self.sendEvent(withName: "stream-ready", body: [
-        "position": 0,
+        "position": startPosition,
         "duration": self.probedDuration,
         "isLive": self.probedIsLive
       ])
 
-      // Handle pending start position
-      if let startPos = self.pendingStartPosition, startPos > 0 {
-        self.pendingStartPosition = nil
-        self.seekTargetPosition = startPos
-        self.isSeeking = true
-        self.seekRetryCount = 0
-        self.seekTimeoutCounter = 0
-        self.sendEvent(withName: "seek-started", body: ["targetPosition": startPos])
+      // Also emit playback-progress so UI shows the correct initial position
+      if startPosition > 0 {
+        self.lastStablePosition = startPosition
+        self.sendEvent(withName: "playback-progress", body: [
+          "position": startPosition,
+          "duration": self.probedDuration,
+          "seeking": false
+        ])
       }
 
       // Handle autoplay
-      if self.pendingAutoplay {
+      if shouldAutoplay {
         self.pendingAutoplay = false
         self.desiredIsPlaying = true
         self.sendPlaybackIntent(true)
