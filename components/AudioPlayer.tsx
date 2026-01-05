@@ -262,7 +262,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
         try {
           // Reset the player and add the new track
-          // Live status and duration will come from stream-ready event (native probes with AVURLAsset)
+          // Live status and duration will come from stream-ready event (native probes with AVURLAsset, fallback to VLC)
           await TrackPlayer.reset();
 
           const startPosition = options?.startPosition ?? null;

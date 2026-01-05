@@ -5,7 +5,7 @@ import React
 import UIKit
 
 @objc(HLSPlayerModule)
-class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
+class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate {
   private var player: VLCMediaPlayer?
   private var forwardInterval: Double = 30
   private var backwardInterval: Double = 15
@@ -25,9 +25,17 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   private var pendingAutoplay: Bool = false
   private var hasEmittedStreamReady = false
 
-  // Probed stream info (from AVURLAsset, more reliable for HLS than VLC)
+  // Probed stream info (from AVURLAsset, fallback to VLC for unsupported formats)
   private var probedIsLive: Bool = false
   private var probedDuration: Double = 0
+
+  // VLC probing fallback state
+  private var probeMedia: VLCMedia?
+  private var probeResolver: RCTPromiseResolveBlock?
+  private var probeTitle: String?
+  private var probeUrlString: String?
+  private var probeStartPosition: Double? = nil
+  private var probeAutoplay: Bool = false
 
   // Seek retry tracking
   private var seekRetryCount: Int = 0
@@ -94,7 +102,17 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
 
     initialize()
 
-    // Probe with AVURLAsset first (more reliable for HLS live detection than VLC)
+    // Store pending start position and autoplay - will be executed when stream is ready
+    let startPos = startPosition?.doubleValue
+    if let start = startPos, start > 0 {
+      self.pendingStartPosition = start
+    } else {
+      self.pendingStartPosition = nil
+    }
+    self.pendingAutoplay = autoplay
+    self.hasEmittedStreamReady = false
+
+    // Try AVURLAsset first (more reliable for HLS)
     let asset = AVURLAsset(url: url)
     asset.loadValuesAsynchronously(forKeys: ["duration"]) { [weak self] in
       DispatchQueue.main.async {
@@ -108,65 +126,145 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
           // A stream is live only if duration is truly indefinite (NaN/Infinite)
           self.probedIsLive = asset.duration == .indefinite || !durationSeconds.isFinite
           self.probedDuration = (durationSeconds.isFinite && durationSeconds > 0) ? durationSeconds : 0
+
+          // AVURLAsset probe succeeded, set up VLC player
+          self.setupVLCPlayer(url: url, title: title, urlString: urlString, autoplay: autoplay, resolver: resolver)
         } else {
-          // Probe failed, assume live until VLC tells us otherwise
-          self.probedIsLive = true
-          self.probedDuration = 0
+          // AVURLAsset failed, fallback to VLC probing
+          self.probeResolver = resolver
+          self.probeTitle = title
+          self.probeUrlString = urlString
+          self.probeStartPosition = startPos
+          self.probeAutoplay = autoplay
+
+          let media = VLCMedia(url: url)
+          media.delegate = self
+          self.probeMedia = media
+          _ = media.parse(options: .parseNetwork)
         }
-
-        // Now set up VLC player
-        let mediaPlayer = VLCMediaPlayer()
-        mediaPlayer.delegate = self
-        mediaPlayer.media = VLCMedia(url: url)
-
-        // Store pending start position and autoplay - will be executed when stream is ready
-        if let start = startPosition?.doubleValue, start > 0 {
-          self.pendingStartPosition = start
-        } else {
-          self.pendingStartPosition = nil
-        }
-        self.pendingAutoplay = autoplay
-        self.hasEmittedStreamReady = false
-
-        self.player = mediaPlayer
-        self.hasValidDuration = !self.probedIsLive && self.probedDuration > 0
-        self.nowPlayingInfo = [:]
-        self.nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = self.probedIsLive
-        if self.probedDuration > 0 {
-          self.nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = self.probedDuration
-        }
-        self.updateNowPlaying(title: title ?? "Stream", url: urlString, duration: self.probedDuration > 0 ? self.probedDuration : nil)
-
-        // Emit stream-ready immediately after load with probed info
-        // Don't wait for VLC playback - we already have the info from AVURLAsset
-        self.hasEmittedStreamReady = true
-        self.sendEvent(withName: "stream-ready", body: [
-          "position": 0,
-          "duration": self.probedDuration,
-          "isLive": self.probedIsLive
-        ])
-
-        // Handle pending start position and autoplay immediately
-        if let startPos = self.pendingStartPosition, startPos > 0 {
-          self.pendingStartPosition = nil
-          self.seekTargetPosition = startPos
-          self.isSeeking = true
-          self.seekRetryCount = 0
-          self.seekTimeoutCounter = 0
-          self.sendEvent(withName: "seek-started", body: ["targetPosition": startPos])
-        }
-
-        if autoplay {
-          self.pendingAutoplay = false
-          self.desiredIsPlaying = true
-          self.sendPlaybackIntent(true)
-          mediaPlayer.play()
-          self.updateNowPlayingState(isPlaying: true)
-          self.sendPlaybackState("playing")
-        }
-
-        resolver(nil)
       }
+    }
+  }
+
+  // Helper to set up VLC player after probing completes
+  private func setupVLCPlayer(url: URL, title: String?, urlString: String, autoplay: Bool, resolver: @escaping RCTPromiseResolveBlock) {
+    let mediaPlayer = VLCMediaPlayer()
+    mediaPlayer.delegate = self
+    mediaPlayer.media = VLCMedia(url: url)
+
+    self.player = mediaPlayer
+    self.hasValidDuration = !self.probedIsLive && self.probedDuration > 0
+    self.nowPlayingInfo = [:]
+    self.nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = self.probedIsLive
+    if self.probedDuration > 0 {
+      self.nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = self.probedDuration
+    }
+    self.updateNowPlaying(title: title ?? "Stream", url: urlString, duration: self.probedDuration > 0 ? self.probedDuration : nil)
+
+    // Emit stream-ready immediately after probe
+    self.hasEmittedStreamReady = true
+    self.sendEvent(withName: "stream-ready", body: [
+      "position": 0,
+      "duration": self.probedDuration,
+      "isLive": self.probedIsLive
+    ])
+
+    // Handle pending start position
+    if let startPos = self.pendingStartPosition, startPos > 0 {
+      self.pendingStartPosition = nil
+      self.seekTargetPosition = startPos
+      self.isSeeking = true
+      self.seekRetryCount = 0
+      self.seekTimeoutCounter = 0
+      self.sendEvent(withName: "seek-started", body: ["targetPosition": startPos])
+    }
+
+    // Handle autoplay
+    if autoplay {
+      self.pendingAutoplay = false
+      self.desiredIsPlaying = true
+      self.sendPlaybackIntent(true)
+      mediaPlayer.play()
+      self.updateNowPlayingState(isPlaying: true)
+      self.sendPlaybackState("playing")
+    }
+
+    resolver(nil)
+  }
+
+  // VLCMediaDelegate - called when VLC media parsing completes (fallback path)
+  func mediaDidFinishParsing(_ aMedia: VLCMedia) {
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else { return }
+
+      // Get duration from parsed media
+      let lengthMs = aMedia.length.intValue
+      let durationSeconds = Double(lengthMs) / 1000.0
+
+      // A stream is live only if duration is 0, negative, or invalid
+      self.probedIsLive = lengthMs <= 0 || !durationSeconds.isFinite
+      self.probedDuration = (durationSeconds.isFinite && durationSeconds > 0) ? durationSeconds : 0
+
+      // Restore pending state from probe context
+      if let startPos = self.probeStartPosition, startPos > 0 {
+        self.pendingStartPosition = startPos
+      }
+      self.pendingAutoplay = self.probeAutoplay
+
+      // Set up VLC player with the parsed media
+      guard let resolver = self.probeResolver,
+            let urlString = self.probeUrlString else { return }
+
+      let mediaPlayer = VLCMediaPlayer()
+      mediaPlayer.delegate = self
+      mediaPlayer.media = aMedia
+
+      self.player = mediaPlayer
+      self.hasValidDuration = !self.probedIsLive && self.probedDuration > 0
+      self.nowPlayingInfo = [:]
+      self.nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = self.probedIsLive
+      if self.probedDuration > 0 {
+        self.nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = self.probedDuration
+      }
+      self.updateNowPlaying(title: self.probeTitle ?? "Stream", url: urlString, duration: self.probedDuration > 0 ? self.probedDuration : nil)
+
+      // Emit stream-ready
+      self.hasEmittedStreamReady = true
+      self.sendEvent(withName: "stream-ready", body: [
+        "position": 0,
+        "duration": self.probedDuration,
+        "isLive": self.probedIsLive
+      ])
+
+      // Handle pending start position
+      if let startPos = self.pendingStartPosition, startPos > 0 {
+        self.pendingStartPosition = nil
+        self.seekTargetPosition = startPos
+        self.isSeeking = true
+        self.seekRetryCount = 0
+        self.seekTimeoutCounter = 0
+        self.sendEvent(withName: "seek-started", body: ["targetPosition": startPos])
+      }
+
+      // Handle autoplay
+      if self.pendingAutoplay {
+        self.pendingAutoplay = false
+        self.desiredIsPlaying = true
+        self.sendPlaybackIntent(true)
+        mediaPlayer.play()
+        self.updateNowPlayingState(isPlaying: true)
+        self.sendPlaybackState("playing")
+      }
+
+      // Clean up probe state
+      self.probeMedia = nil
+      self.probeResolver = nil
+      self.probeTitle = nil
+      self.probeUrlString = nil
+      self.probeStartPosition = nil
+      self.probeAutoplay = false
+
+      resolver(nil)
     }
   }
 
@@ -636,8 +734,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     // Emit stream-ready once we have a valid position (stream is loaded and ready)
     if !hasEmittedStreamReady && rawPosition >= 0 {
       hasEmittedStreamReady = true
-      // Use probed values from AVURLAsset (more reliable for HLS than VLC's initial detection)
-      // Fall back to VLC duration if probed duration is 0 but VLC has a valid duration
+      // Use probed values from VLC media parsing
+      // Fall back to current VLC duration if probed duration is 0 but VLC has a valid duration
       let effectiveDuration = probedDuration > 0 ? probedDuration : duration
       let effectiveIsLive = probedDuration > 0 ? probedIsLive : (duration <= 0 || !duration.isFinite)
       sendEvent(withName: "stream-ready", body: [
