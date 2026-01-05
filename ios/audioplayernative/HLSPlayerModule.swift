@@ -132,17 +132,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
           // AVURLAsset probe succeeded, set up VLC player
           self.setupVLCPlayer(url: url, title: title, urlString: urlString, autoplay: autoplay, resolver: resolver)
-        } else if status == .failed, let error = error {
-          // AVURLAsset probe failed with error - report it and don't fallback
-          let errorMessage = self.extractHTTPError(from: error) ?? error.localizedDescription
-          self.sendEvent(withName: "playback-error", body: [
-            "message": "Stream loading failed",
-            "detail": errorMessage,
-            "code": error.code
-          ])
-          resolver(nil)
         } else {
-          // AVURLAsset failed without error or cancelled, fallback to VLC probing
+          // AVURLAsset failed, fallback to VLC probing (VLC often handles more formats/errors)
           self.probeResolver = resolver
           self.probeTitle = title
           self.probeUrlString = urlString
