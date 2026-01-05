@@ -110,6 +110,15 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       isLiveStreamRef.current = isLiveStream;
     }, [isLiveStream]);
 
+    useEffect(() => {
+      if (playbackState.state !== State.Stopped) return;
+      setPendingSeekPosition(null);
+      setScrubPosition(0);
+      setIsScrubbing(false);
+      lastProgressPosRef.current = 0;
+      lastProgressAtRef.current = Date.now();
+    }, [playbackState.state]);
+
 
     useImperativeHandle(ref, () => ({
       enterPublishMode: () => syncRef.current?.startSession(),
@@ -123,14 +132,38 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       getSessionStatus: () => session.sessionStatus,
     }));
 
+    const rehydrateIfStopped = useCallback(async () => {
+      if (playbackState.state !== State.Stopped) return;
+
+      const active = await TrackPlayer.getActiveTrack();
+      const urlToLoad = active?.url ?? currentUrlRef.current;
+      if (!urlToLoad) return;
+
+      const titleToLoad = active?.title ?? currentTitleRef.current ?? undefined;
+
+      await TrackPlayer.reset();
+      await TrackPlayer.add({
+        id: urlToLoad,
+        url: urlToLoad,
+        title: titleToLoad || "Stream",
+        artist: urlToLoad,
+      });
+
+      const resumePos = pendingSeekPosition ?? position;
+      if (typeof resumePos === "number" && Number.isFinite(resumePos) && resumePos > 0) {
+        await TrackPlayer.seekTo(resumePos);
+      }
+    }, [pendingSeekPosition, playbackState.state, position]);
+
     const handlePlay = useCallback(async () => {
       if (isViewOnly) return;
       try {
+        await rehydrateIfStopped();
         await TrackPlayer.play();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Playback error");
       }
-    }, [isViewOnly]);
+    }, [isViewOnly, rehydrateIfStopped]);
 
     const handlePause = useCallback(async () => {
       if (isViewOnly) return;
@@ -512,6 +545,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       // Recompute every timer tick for smoother UI
       void nowTick;
 
+      if (playbackState.state === State.Stopped) return 0;
+
       if (isScrubbing) return scrubPosition;
       if (pendingSeekPosition !== null) return pendingSeekPosition;
       if (isViewOnly) return viewOnlyPosition ?? position;
@@ -539,6 +574,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       position,
       scrubPosition,
       viewOnlyPosition,
+      playbackState.state,
     ]);
 
     // Display position (scrub, then pending seek preview/optimistic, then live position)
