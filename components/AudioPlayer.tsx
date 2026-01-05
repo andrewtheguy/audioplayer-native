@@ -391,11 +391,19 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     };
 
     const handleJumpBackward = async () => {
-      await TrackPlayer.jumpBackward();
+      try {
+        await TrackPlayer.jumpBackward();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Jump backward failed");
+      }
     };
 
     const handleJumpForward = async () => {
-      await TrackPlayer.jumpForward();
+      try {
+        await TrackPlayer.jumpForward();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Jump forward failed");
+      }
     };
 
     // Reset auto-save timer when playback stops
