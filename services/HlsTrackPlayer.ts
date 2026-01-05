@@ -85,6 +85,7 @@ export type HlsPlayerEvent =
   | "playback-progress"
   | "playback-intent"
   | "stream-ready"
+  | "stream-info"
   | "seek-started"
   | "seek-completed";
 
@@ -327,6 +328,14 @@ export function useStreamReady(): StreamReadyInfo | null {
         isLive: Boolean(payload?.isLive),
       });
     });
+    // Listen for stream-info updates (e.g., when duration becomes available for HLS)
+    const infoSub = emitter.addListener("stream-info", (payload?: { duration?: number; isLive?: boolean }) => {
+      setStreamInfo((prev) => prev ? {
+        ...prev,
+        duration: Number(payload?.duration ?? prev.duration),
+        isLive: Boolean(payload?.isLive),
+      } : null);
+    });
     // Reset when playback state becomes none or stopped
     const stateSub = emitter.addListener("playback-state", (payload?: { state?: string }) => {
       if (payload?.state === "none" || payload?.state === "stopped") {
@@ -335,6 +344,7 @@ export function useStreamReady(): StreamReadyInfo | null {
     });
     return () => {
       readySub.remove();
+      infoSub.remove();
       stateSub.remove();
     };
   }, []);

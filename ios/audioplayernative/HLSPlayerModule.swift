@@ -48,6 +48,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
       "playback-progress",
       "playback-intent",
       "stream-ready",
+      "stream-info",
       "seek-started",
       "seek-completed",
     ]
@@ -556,10 +557,16 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     let duration = safeDuration()
 
     // Once we get a valid duration, update Now Playing to non-live mode
+    // and emit stream-info event to update isLive status
     if !hasValidDuration && duration > 0 {
       hasValidDuration = true
       nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = false
       nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
+      // Emit stream-info to update isLive (now we know it's NOT live since we have duration)
+      sendEvent(withName: "stream-info", body: [
+        "duration": duration,
+        "isLive": false
+      ])
     }
 
     // Emit stream-ready once we have a valid position (stream is loaded and ready)
