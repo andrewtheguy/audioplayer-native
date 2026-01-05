@@ -155,37 +155,41 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   // Helper to set up VLC player after probing completes
   private func setupVLCPlayer(url: URL, title: String?, urlString: String, autoplay: Bool, resolver: @escaping RCTPromiseResolveBlock) {
     let media = VLCMedia(url: url)
+    configurePlayerWithMedia(media, title: title, urlString: urlString, autoplay: autoplay, resolver: resolver)
+  }
 
+  // Shared helper for configuring player with media (used by both AVURLAsset and VLC probe paths)
+  private func configurePlayerWithMedia(_ media: VLCMedia, title: String?, urlString: String, autoplay: Bool, resolver: @escaping RCTPromiseResolveBlock) {
     // Use VLC's start-time option for cleaner initial positioning
     var startPosition: Double = 0
-    let needsPreload = !autoplay && self.pendingStartPosition != nil && self.pendingStartPosition! > 0
+    let needsPreload = !autoplay && pendingStartPosition != nil && pendingStartPosition! > 0
 
-    if let startPos = self.pendingStartPosition, startPos > 0 {
+    if let startPos = pendingStartPosition, startPos > 0 {
       media.addOption("start-time=\(startPos)")
       startPosition = startPos
-      self.pendingStartPosition = nil
+      pendingStartPosition = nil
 
       // If not autoplaying, we need to do a silent preload to position the stream
       if needsPreload {
-        self.isPreloading = true
-        self.preloadTargetPosition = startPos
+        isPreloading = true
+        preloadTargetPosition = startPos
       }
     }
 
     // Emit stream-ready with start position
-    self.hasEmittedStreamReady = true
-    self.sendEvent(withName: "stream-ready", body: [
+    hasEmittedStreamReady = true
+    sendEvent(withName: "stream-ready", body: [
       "position": startPosition,
-      "duration": self.probedDuration,
-      "isLive": self.probedIsLive
+      "duration": probedDuration,
+      "isLive": probedIsLive
     ])
 
     // Also emit playback-progress so UI shows the correct initial position
     if startPosition > 0 {
-      self.lastStablePosition = startPosition
-      self.sendEvent(withName: "playback-progress", body: [
+      lastStablePosition = startPosition
+      sendEvent(withName: "playback-progress", body: [
         "position": startPosition,
-        "duration": self.probedDuration,
+        "duration": probedDuration,
         "seeking": false
       ])
     }
@@ -194,23 +198,23 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     mediaPlayer.delegate = self
     mediaPlayer.media = media
 
-    self.player = mediaPlayer
-    self.hasValidDuration = !self.probedIsLive && self.probedDuration > 0
-    self.nowPlayingInfo = [:]
-    self.nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = self.probedIsLive
-    if self.probedDuration > 0 {
-      self.nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = self.probedDuration
+    player = mediaPlayer
+    hasValidDuration = !probedIsLive && probedDuration > 0
+    nowPlayingInfo = [:]
+    nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = probedIsLive
+    if probedDuration > 0 {
+      nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = probedDuration
     }
-    self.updateNowPlaying(title: title ?? "Stream", url: urlString, duration: self.probedDuration > 0 ? self.probedDuration : nil)
+    updateNowPlaying(title: title ?? "Stream", url: urlString, duration: probedDuration > 0 ? probedDuration : nil)
 
     // Handle autoplay or preload
     if autoplay {
-      self.pendingAutoplay = false
-      self.desiredIsPlaying = true
-      self.sendPlaybackIntent(true)
+      pendingAutoplay = false
+      desiredIsPlaying = true
+      sendPlaybackIntent(true)
       mediaPlayer.play()
-      self.updateNowPlayingState(isPlaying: true)
-      self.sendPlaybackState("playing")
+      updateNowPlayingState(isPlaying: true)
+      sendPlaybackState("playing")
     } else if needsPreload {
       // Silent preload: mute audio, play briefly to trigger start-time positioning, then pause
       mediaPlayer.audio?.isMuted = true
@@ -246,72 +250,9 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
       guard let resolver = self.probeResolver,
             let urlString = self.probeUrlString else { return }
 
-      // Use VLC's start-time option for cleaner initial positioning (must be set before assigning to player)
-      let shouldAutoplay = self.pendingAutoplay
-      var startPosition: Double = 0
-      let needsPreload = !shouldAutoplay && self.pendingStartPosition != nil && self.pendingStartPosition! > 0
+      let title = self.probeTitle
 
-      if let startPos = self.pendingStartPosition, startPos > 0 {
-        aMedia.addOption("start-time=\(startPos)")
-        startPosition = startPos
-        self.pendingStartPosition = nil
-
-        // If not autoplaying, we need to do a silent preload to position the stream
-        if needsPreload {
-          self.isPreloading = true
-          self.preloadTargetPosition = startPos
-        }
-      }
-
-      let mediaPlayer = VLCMediaPlayer()
-      mediaPlayer.delegate = self
-      mediaPlayer.media = aMedia
-
-      self.player = mediaPlayer
-      self.hasValidDuration = !self.probedIsLive && self.probedDuration > 0
-      self.nowPlayingInfo = [:]
-      self.nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = self.probedIsLive
-      if self.probedDuration > 0 {
-        self.nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = self.probedDuration
-      }
-      self.updateNowPlaying(title: self.probeTitle ?? "Stream", url: urlString, duration: self.probedDuration > 0 ? self.probedDuration : nil)
-
-      // Emit stream-ready with start position
-      self.hasEmittedStreamReady = true
-      self.sendEvent(withName: "stream-ready", body: [
-        "position": startPosition,
-        "duration": self.probedDuration,
-        "isLive": self.probedIsLive
-      ])
-
-      // Also emit playback-progress so UI shows the correct initial position
-      if startPosition > 0 {
-        self.lastStablePosition = startPosition
-        self.sendEvent(withName: "playback-progress", body: [
-          "position": startPosition,
-          "duration": self.probedDuration,
-          "seeking": false
-        ])
-      }
-
-      // Handle autoplay or preload
-      if shouldAutoplay {
-        self.pendingAutoplay = false
-        self.desiredIsPlaying = true
-        self.sendPlaybackIntent(true)
-        mediaPlayer.play()
-        self.updateNowPlayingState(isPlaying: true)
-        self.sendPlaybackState("playing")
-      } else if needsPreload {
-        // Silent preload: mute audio, play briefly to trigger start-time positioning, then pause
-        mediaPlayer.audio?.isMuted = true
-        mediaPlayer.play()
-        mediaPlayer.pause()
-        // isPreloading remains true to suppress position events until user plays
-        // Keep muted - will unmute when user explicitly plays
-      }
-
-      // Clean up probe state
+      // Clean up probe state before calling helper
       self.probeMedia = nil
       self.probeResolver = nil
       self.probeTitle = nil
@@ -319,7 +260,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
       self.probeStartPosition = nil
       self.probeAutoplay = false
 
-      resolver(nil)
+      self.configurePlayerWithMedia(aMedia, title: title, urlString: urlString, autoplay: self.pendingAutoplay, resolver: resolver)
     }
   }
 
