@@ -4,7 +4,7 @@ import { useNostrSession } from "@/hooks/useNostrSession";
 import type { HistoryEntry } from "@/lib/history";
 import { getHistory, saveHistory } from "@/lib/history";
 import * as TrackPlayer from "@/services/HlsTrackPlayer";
-import { State, usePlaybackState, useProgress } from "@/services/HlsTrackPlayer";
+import { State, usePlaybackIntent, usePlaybackState, useProgress } from "@/services/HlsTrackPlayer";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import Slider from "@react-native-community/slider";
 import {
