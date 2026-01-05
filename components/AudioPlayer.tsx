@@ -100,6 +100,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const lastAutoSaveAtRef = useRef(0);
     const isLiveStreamRef = useRef(false);
     const expectedResumeRef = useRef(0);
+    const pendingStartRef = useRef<number | null>(null);
 
     const session = useNostrSession({
       secret,
@@ -123,7 +124,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       lastProgressPosRef.current = 0;
       lastProgressAtRef.current = Date.now();
     }, [playbackState.state, pendingSeekPosition]);
-
 
     useImperativeHandle(ref, () => ({
       enterPublishMode: () => syncRef.current?.startSession(),
@@ -188,6 +188,48 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         // Ignore seek failures
       }
     }, []);
+
+    const seekWithRetry = useCallback(
+      async (targetSeconds: number) => {
+        if (!Number.isFinite(targetSeconds) || targetSeconds < 0) return;
+        const target = Math.max(0, targetSeconds);
+
+        const attemptSeek = async () => {
+          try {
+            await TrackPlayer.seekTo(target);
+          } catch {
+            /* noop */
+          }
+        };
+
+        await attemptSeek();
+
+        const maxAttempts = 3;
+        for (let i = 0; i < maxAttempts; i += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          const progress = await TrackPlayer.getProgress().catch(() => null);
+          const currentPos = Number(progress?.position ?? 0);
+          if (Math.abs(currentPos - target) < 0.5) {
+            return;
+          }
+          await attemptSeek();
+        }
+      },
+      []
+    );
+
+    useEffect(() => {
+      const target = pendingStartRef.current;
+      if (!target || target <= 0) return;
+
+      const readyLikeStates = [State.Ready, State.Playing, State.Buffering, State.Paused];
+      if (!readyLikeStates.includes(playbackState.state)) return;
+
+      pendingStartRef.current = null;
+      void (async () => {
+        await seekWithRetry(target);
+      })();
+    }, [playbackState.state, seekWithRetry]);
 
     // Stop and clear the player when session becomes inactive to avoid background audio
     useEffect(() => {
@@ -294,11 +336,14 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           const startPosition = options?.startPosition ?? null;
           if (Number.isFinite(startPosition) && (startPosition as number) > 0) {
             expectedResumeRef.current = startPosition as number;
+            pendingStartRef.current = startPosition as number;
+            setPendingSeekPosition(startPosition as number);
+            setScrubPosition(startPosition as number);
+            lastProgressPosRef.current = startPosition as number;
+            lastProgressAtRef.current = Date.now();
           } else {
             expectedResumeRef.current = 0;
-          }
-          if (startPosition !== null && Number.isFinite(startPosition) && startPosition > 0) {
-            await TrackPlayer.seekTo(startPosition);
+            pendingStartRef.current = null;
           }
 
           if (!options?.skipInitialSave) {
@@ -306,11 +351,13 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           }
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to load audio");
+          pendingStartRef.current = null;
+          expectedResumeRef.current = 0;
         } finally {
           setLoading(false);
         }
       },
-      [saveHistoryEntry]
+      [saveHistoryEntry, seekWithRetry]
     );
 
     const applyHistoryDisplay = useCallback(
@@ -345,6 +392,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         setScrubPosition(start);
         lastProgressPosRef.current = start;
         lastProgressAtRef.current = Date.now();
+        pendingStartRef.current = start > 0 ? start : null;
 
         void (async () => {
           await loadUrl(entry.url, entry.title, {
