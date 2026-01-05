@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NativeEventEmitter, NativeModules, Platform } from "react-native";
 
 const LINKING_ERROR =
@@ -64,6 +64,7 @@ export type Progress = {
   position: number;
   duration: number;
   buffered?: number;
+  seeking?: boolean;
 };
 
 export type PlaybackState = { state: State };
@@ -278,33 +279,30 @@ export function usePlaybackState(): PlaybackState {
 }
 
 export function useProgress(updateInterval: number = 250): Progress {
-  const [progress, setProgress] = useState<Progress>({ position: 0, duration: 0, buffered: 0 });
+  const [progress, setProgress] = useState<Progress>({ position: 0, duration: 0, buffered: 0, seeking: false });
+  const lastPositionRef = useRef(0);
 
   useEffect(() => {
     const sub = emitter.addListener("playback-progress", (payload?: Progress) => {
+      const newPosition = Number(payload?.position ?? 0);
+      const isSeeking = Boolean(payload?.seeking);
+
+      // Native handles filtering now, but add a safety check for backward jumps
+      if (!isSeeking && newPosition < lastPositionRef.current - 1.0 && newPosition > 0 && lastPositionRef.current > 0) {
+        return; // Skip unexpected backward jump
+      }
+
+      lastPositionRef.current = newPosition;
       setProgress({
-        position: Number(payload?.position ?? 0),
+        position: newPosition,
         duration: Number(payload?.duration ?? 0),
         buffered: Number(payload?.buffered ?? 0),
+        seeking: isSeeking,
       });
     });
 
-    // Polling causes jitter/fighting with events. Since we don't use buffered currently,
-    // and events provide position/duration, we can skip polling or reduce it significantly.
-    // If buffered is needed later, we should only update buffered from polling.
-    /*
-    const timer = setInterval(() => {
-      void getProgress()
-        .then((p) => setProgress(p))
-        .catch(() => {
-          // ignore polling failures
-        });
-    }, Math.max(250, updateInterval));
-    */
-
     return () => {
       sub.remove();
-      // clearInterval(timer);
     };
   }, [updateInterval]);
 

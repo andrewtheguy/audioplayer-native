@@ -14,6 +14,13 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   private var hasValidDuration = false
   private var desiredIsPlaying = false
 
+  // Seek state tracking
+  private var isSeeking = false
+  private var seekTargetPosition: Double = 0
+  private var seekStartTime: Date?
+  private var lastStablePosition: Double = 0
+  private var positionTimer: Timer?
+
   deinit {
     NotificationCenter.default.removeObserver(self)
   }
@@ -45,6 +52,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     configureAudioSession()
     configureRemoteCommands()
     configureLifecycleObservers()
+    startPositionTimer()
     isInitialized = true
   }
 
@@ -131,6 +139,9 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     desiredIsPlaying = false
     sendPlaybackIntent(false)
     hasValidDuration = false
+    isSeeking = false
+    seekTargetPosition = 0
+    lastStablePosition = 0
     nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = nil
     nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
     updateNowPlayingState(isPlaying: false)
@@ -146,6 +157,9 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     desiredIsPlaying = false
     sendPlaybackIntent(false)
     hasValidDuration = false
+    isSeeking = false
+    seekTargetPosition = 0
+    lastStablePosition = 0
     nowPlayingInfo = [:]
     nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
     MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
@@ -162,8 +176,21 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
       return
     }
 
-    let millis = Int32(max(0, position.doubleValue * 1000))
+    let targetSeconds = max(0, position.doubleValue)
+    seekTargetPosition = targetSeconds
+    isSeeking = true
+    seekStartTime = Date()
+
+    let millis = Int32(targetSeconds * 1000)
     player.time = VLCTime(int: millis)
+
+    // Immediately emit target position for responsive UI
+    sendEvent(withName: "playback-progress", body: [
+      "position": targetSeconds,
+      "duration": safeDuration(),
+      "seeking": true
+    ])
+
     updateNowPlayingProgress()
     resolve(nil)
   }
@@ -246,6 +273,35 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     // Re-sync position and state when app returns from background
     updateNowPlayingProgress()
     updateNowPlayingState(isPlaying: player?.isPlaying == true)
+  }
+
+  private func startPositionTimer() {
+    positionTimer?.invalidate()
+    positionTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+      self?.emitPeriodicPosition()
+    }
+  }
+
+  private func stopPositionTimer() {
+    positionTimer?.invalidate()
+    positionTimer = nil
+  }
+
+  private func emitPeriodicPosition() {
+    guard let player = player, player.isPlaying, !isSeeking else { return }
+
+    let position = safePosition()
+    let duration = safeDuration()
+
+    // Skip if position hasn't meaningfully changed
+    if abs(position - lastStablePosition) < 0.1 { return }
+
+    lastStablePosition = position
+    sendEvent(withName: "playback-progress", body: [
+      "position": position,
+      "duration": duration,
+      "seeking": false
+    ])
   }
 
   private func configureRemoteCommands() {
@@ -516,7 +572,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   }
 
   func mediaPlayerTimeChanged(_ aNotification: Notification) {
-    let position = safePosition()
+    let rawPosition = safePosition()
     let duration = safeDuration()
 
     // Once we get a valid duration, update Now Playing to non-live mode
@@ -526,9 +582,41 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
       nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
     }
 
+    // During seeking: only accept position once stabilized near target
+    if isSeeking {
+      let tolerance: Double = 2.0  // HLS keyframe tolerance
+      let isNearTarget = abs(rawPosition - seekTargetPosition) < tolerance
+      let seekAge = Date().timeIntervalSince(seekStartTime ?? Date())
+
+      if isNearTarget || seekAge > 3.0 {
+        // Seek complete
+        isSeeking = false
+        lastStablePosition = rawPosition
+      } else {
+        // Still seeking - emit target position, not erratic VLC position
+        sendEvent(withName: "playback-progress", body: [
+          "position": seekTargetPosition,
+          "duration": duration,
+          "seeking": true
+        ])
+        return
+      }
+    }
+
+    // Filter backwards jumps during playback (not paused/stopped)
+    if !isSeeking && player?.isPlaying == true && lastStablePosition > 0 {
+      if rawPosition < lastStablePosition - 2.0 && rawPosition > 0 {
+        // Unexpected backward jump - ignore
+        return
+      }
+    }
+
+    lastStablePosition = rawPosition
+
     sendEvent(withName: "playback-progress", body: [
-      "position": position,
+      "position": rawPosition,
       "duration": duration,
+      "seeking": false
     ])
     updateNowPlayingProgress()
   }

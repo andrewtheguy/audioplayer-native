@@ -67,8 +67,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     // Scrubbing state - when true, we show scrub position instead of actual position
     const [isScrubbing, setIsScrubbing] = useState(false);
     const [scrubPosition, setScrubPosition] = useState(0);
-    const [pendingSeekPosition, setPendingSeekPosition] = useState<number | null>(null);
-    const lastSeekAtRef = useRef(0);
     const lastProgressAtRef = useRef(Date.now());
     const lastProgressPosRef = useRef(0);
     const [nowTick, setNowTick] = useState(Date.now());
@@ -77,7 +75,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const [probeDuration, setProbeDuration] = useState<number>(0);
 
     // TrackPlayer hooks for real-time updates
-    const { position, duration: vlcDuration } = useProgress(200);
+    const { position, duration: vlcDuration, seeking: isSeeking } = useProgress(200);
     const playbackState = usePlaybackState();
     const playbackIntent = usePlaybackIntent();
     const hasActiveTrack = Boolean(nowPlayingUrl);
@@ -118,14 +116,11 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     useEffect(() => {
       if (playbackState.state !== State.Stopped) return;
-      // Preserve pending seek when we're intentionally rehydrating/auto-seeking after a history click
-      if (pendingSeekPosition !== null) return;
-      setPendingSeekPosition(null);
       setScrubPosition(0);
       setIsScrubbing(false);
       lastProgressPosRef.current = 0;
       lastProgressAtRef.current = Date.now();
-    }, [playbackState.state, pendingSeekPosition]);
+    }, [playbackState.state]);
 
     useImperativeHandle(ref, () => ({
       enterPublishMode: () => syncRef.current?.startSession(),
@@ -156,11 +151,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         artist: urlToLoad,
       });
 
-      const resumePos = pendingSeekPosition ?? position;
-      if (typeof resumePos === "number" && Number.isFinite(resumePos) && resumePos > 0) {
-        await TrackPlayer.seekTo(resumePos);
+      if (typeof position === "number" && Number.isFinite(position) && position > 0) {
+        await TrackPlayer.seekTo(position);
       }
-    }, [pendingSeekPosition, playbackState.state, position]);
+    }, [playbackState.state, position]);
 
     const handlePlay = useCallback(async () => {
       if (isViewOnly) return;
@@ -314,7 +308,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           if (Number.isFinite(startPosition) && (startPosition as number) > 0) {
             expectedResumeRef.current = startPosition as number;
             pendingStartRef.current = startPosition as number;
-            setPendingSeekPosition(startPosition as number);
             setScrubPosition(startPosition as number);
             lastProgressPosRef.current = startPosition as number;
             lastProgressAtRef.current = Date.now();
@@ -365,7 +358,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         expectedResumeRef.current = start;
 
         // Optimistically reflect the saved position in UI before VLC reports progress
-        setPendingSeekPosition(start > 0 ? start : null);
         setScrubPosition(start);
         lastProgressPosRef.current = start;
         lastProgressAtRef.current = Date.now();
@@ -444,20 +436,11 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     const seekBy = async (deltaSeconds: number) => {
       if (isViewOnly || isLiveStreamRef.current || !currentUrlRef.current) return;
-      
-      // Calculate current optimistic position for accurate relative seeking
-      let basePosition = position;
-      if (pendingSeekPosition !== null) {
-        basePosition = pendingSeekPosition;
-      } else if (isPlaying) {
-         const elapsedMs = Date.now() - lastProgressAtRef.current;
-         const elapsedSec = Math.max(0, elapsedMs) / 1000;
-         basePosition = lastProgressPosRef.current + elapsedSec;
-      }
 
-      const next = Math.max(0, basePosition + deltaSeconds);
-      setPendingSeekPosition(next);
-      lastSeekAtRef.current = Date.now();
+      // Use display position as base (already optimistic)
+      const basePosition = displayPosition;
+      const next = Math.max(0, Math.min(basePosition + deltaSeconds, duration || Infinity));
+
       await seekTo(next);
     };
 
@@ -585,33 +568,18 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     // Seek slider handlers
     const handleSeekStart = () => {
       setIsScrubbing(true);
-      setScrubPosition(position);
-      setPendingSeekPosition(null);
+      setScrubPosition(displayPosition);
     };
 
     const handleSeekChange = (value: number) => {
       setScrubPosition(value);
-      setPendingSeekPosition(value);
-      lastSeekAtRef.current = Date.now();
     };
 
     const handleSeekComplete = async (value: number) => {
       setScrubPosition(value);
-      setPendingSeekPosition(value);
-      lastSeekAtRef.current = Date.now();
       await seekTo(value);
       setIsScrubbing(false);
     };
-
-    // Keep showing target position until TrackPlayer reports the new position to avoid UI snap-back
-    useEffect(() => {
-      if (pendingSeekPosition === null) return;
-      const age = Date.now() - lastSeekAtRef.current;
-      // Increased tolerance and timeout to prevent jumping back during buffering
-      if (Math.abs(position - pendingSeekPosition) < 1.0 || age > 5000) {
-        setPendingSeekPosition(null);
-      }
-    }, [pendingSeekPosition, position]);
 
     const optimisticPosition = useMemo(() => {
       // Recompute every timer tick for smoother UI
@@ -620,11 +588,14 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       if (playbackState.state === State.Stopped) return 0;
 
       if (isScrubbing) return scrubPosition;
-      if (pendingSeekPosition !== null) return pendingSeekPosition;
       if (isViewOnly) return viewOnlyPosition ?? position;
+
+      // During seeking, native sends target position - trust it
+      if (isSeeking) return position;
 
       if (!isPlaying) return position;
 
+      // Interpolate between native updates for smooth display
       const elapsedMs = Date.now() - lastProgressAtRef.current;
       const elapsedSec = Math.max(0, elapsedMs) / 1000;
       const estimate = lastProgressPosRef.current + elapsedSec;
@@ -634,9 +605,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       duration,
       isPlaying,
       isScrubbing,
+      isSeeking,
       isViewOnly,
       nowTick,
-      pendingSeekPosition,
       position,
       scrubPosition,
       viewOnlyPosition,
