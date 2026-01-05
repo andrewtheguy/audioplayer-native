@@ -186,6 +186,37 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     }
   }
 
+  @objc
+  func probe(_ urlString: String, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+    guard let url = URL(string: urlString) else {
+      reject("invalid_url", "Invalid URL", nil)
+      return
+    }
+
+    let asset = AVURLAsset(url: url)
+    let key = "duration"
+
+    asset.loadValuesAsynchronously(forKeys: [key]) {
+      var error: NSError?
+      let status = asset.statusOfValue(forKey: key, error: &error)
+
+      DispatchQueue.main.async {
+        if status != .loaded {
+          reject("probe_failed", "Unable to load stream metadata", error)
+          return
+        }
+
+        let durationSeconds = CMTimeGetSeconds(asset.duration)
+        let hasFiniteDuration = durationSeconds.isFinite && durationSeconds > 0
+        let isLive = !hasFiniteDuration || asset.duration == .indefinite
+        resolve([
+          "isLive": isLive,
+          "duration": hasFiniteDuration ? durationSeconds : 0,
+        ])
+      }
+    }
+  }
+
   private func configureLifecycleObservers() {
     NotificationCenter.default.addObserver(
       self,

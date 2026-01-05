@@ -68,6 +68,7 @@ export type Progress = {
 
 export type PlaybackState = { state: State };
 export type PlaybackIntent = { playing: boolean };
+export type ProbeResult = { isLive: boolean; duration: number };
 
 export type HlsPlayerEvent =
   | "remote-play"
@@ -237,6 +238,15 @@ export async function getProgress(): Promise<Progress> {
   };
 }
 
+export async function probe(url: string): Promise<ProbeResult> {
+  ensureIOS();
+  const result = await NativeHlsPlayer.probe(url);
+  return {
+    isLive: Boolean(result?.isLive),
+    duration: Number(result?.duration ?? 0),
+  };
+}
+
 export async function getPlaybackState(): Promise<PlaybackState> {
   ensureIOS();
   return playbackState;
@@ -322,6 +332,7 @@ const TrackPlayer = {
   getProgress,
   getPlaybackState,
   getActiveTrack,
+  probe,
   addEventListener,
 };
 

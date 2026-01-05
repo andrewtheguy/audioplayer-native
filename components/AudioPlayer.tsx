@@ -51,24 +51,6 @@ function formatTime(seconds: number | null): string {
     .padStart(2, "0")}`;
 }
 
-async function probeIsLive(url: string): Promise<boolean> {
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    const res = await fetch(url, { method: "GET", signal: controller.signal });
-    clearTimeout(timeout);
-
-    const text = await res.text();
-    const sample = text.slice(0, 50000).toUpperCase();
-    if (!sample.includes("#EXTM3U")) return false;
-    if (sample.includes("#EXT-X-PLAYLIST-TYPE:VOD")) return false;
-    if (sample.includes("#EXT-X-ENDLIST")) return false;
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   ({ secret, onSessionStatusChange }, ref) => {
     const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -238,7 +220,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         setError(null);
 
         try {
-          const live = await probeIsLive(urlToLoad);
+          const probe = await TrackPlayer.probe(urlToLoad);
+          const live = Boolean(probe?.isLive);
           setIsLiveStream(live);
           isLiveStreamRef.current = live;
 
