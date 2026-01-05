@@ -149,6 +149,11 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
   // Helper to set up VLC player after probing completes
   private func setupVLCPlayer(url: URL, title: String?, urlString: String, autoplay: Bool, resolver: @escaping RCTPromiseResolveBlock) {
+    // For live streams, don't try to restore a previous position - always start at live edge
+    if probedIsLive {
+      pendingStartPosition = nil
+    }
+
     let media = VLCMedia(url: url)
     configurePlayerWithMedia(media, title: title, urlString: urlString, autoplay: autoplay, resolver: resolver)
   }
@@ -229,8 +234,11 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
       self.probedDuration = (durationSeconds.isFinite && durationSeconds > 0) ? durationSeconds : 0
 
       // Restore pending state from probe context
-      if let startPos = self.probeStartPosition, startPos > 0 {
+      // For live streams, don't try to restore a previous position - always start at live edge
+      if !self.probedIsLive, let startPos = self.probeStartPosition, startPos > 0 {
         self.pendingStartPosition = startPos
+      } else {
+        self.pendingStartPosition = nil
       }
       self.pendingAutoplay = self.probeAutoplay
 
