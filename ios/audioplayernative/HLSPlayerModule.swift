@@ -792,7 +792,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
     // Emit stream-ready via centralized helper (handles hasEmittedStreamReady guard,
     // pendingStartPosition verification/seek, and pendingAutoplay)
-    if rawPosition >= 0 && emitStreamReady() {
+    if emitStreamReady() {
       return
     }
 
