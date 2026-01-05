@@ -155,7 +155,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   private func configurePlayerWithMedia(_ media: VLCMedia, title: String?, urlString: String, autoplay: Bool, resolver: @escaping RCTPromiseResolveBlock) {
     // Use VLC's start-time option for cleaner initial positioning
     var startPosition: Double = 0
-    let needsPreload = !autoplay && pendingStartPosition != nil && pendingStartPosition! > 0
+    var needsPreload = false
 
     if let startPos = pendingStartPosition, startPos > 0 {
       media.addOption("start-time=\(startPos)")
@@ -163,6 +163,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
       pendingStartPosition = nil
 
       // If not autoplaying, we need to do a silent preload to position the stream
+      needsPreload = !autoplay
       if needsPreload {
         isPreloading = true
         preloadTargetPosition = startPos
@@ -257,8 +258,9 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     }
   }
 
-  @objc
-  func play(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+  // MARK: - Core playback methods (shared by @objc and remote handlers)
+
+  private func performPlay() {
     initialize()
     desiredIsPlaying = true
     sendPlaybackIntent(true)
@@ -288,22 +290,18 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     updateNowPlayingState(isPlaying: true)
     updateNowPlayingProgress()
     sendPlaybackState("playing")
-    resolve(nil)
   }
 
-  @objc
-  func pause(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+  private func performPause() {
     desiredIsPlaying = false
     sendPlaybackIntent(false)
     player?.pause()
     updateNowPlayingState(isPlaying: false)
     updateNowPlayingProgress()
     sendPlaybackState("paused")
-    resolve(nil)
   }
 
-  @objc
-  func stop(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+  private func performStop() {
     stopPositionTimer()
     if let player = player {
       player.stop()
@@ -320,6 +318,25 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     updateNowPlayingState(isPlaying: false)
     updateNowPlayingProgress()
     sendPlaybackState("stopped")
+  }
+
+  // MARK: - React Native exposed methods
+
+  @objc
+  func play(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+    performPlay()
+    resolve(nil)
+  }
+
+  @objc
+  func pause(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+    performPause()
+    resolve(nil)
+  }
+
+  @objc
+  func stop(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+    performStop()
     resolve(nil)
   }
 
@@ -524,43 +541,17 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   }
 
   private func handleRemotePlay() {
-    desiredIsPlaying = true
-    sendPlaybackIntent(true)
-
-    // Unmute audio if it was muted during preload
-    if let audio = player?.audio, audio.isMuted {
-      audio.isMuted = false
-    }
-    isPreloading = false
-
-    player?.play()
-    updateNowPlayingState(isPlaying: true)
-    sendPlaybackState("playing")
+    performPlay()
     sendEvent(withName: "remote-play", body: nil)
   }
 
   private func handleRemotePause() {
-    desiredIsPlaying = false
-    sendPlaybackIntent(false)
-    player?.pause()
-    updateNowPlayingState(isPlaying: false)
-    sendPlaybackState("paused")
+    performPause()
     sendEvent(withName: "remote-pause", body: nil)
   }
 
   private func handleRemoteStop() {
-    if let player = player {
-      player.stop()
-      player.time = VLCTime(int: 0)
-    }
-    desiredIsPlaying = false
-    sendPlaybackIntent(false)
-    hasValidDuration = false
-    nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = nil
-    nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
-    updateNowPlayingState(isPlaying: false)
-    updateNowPlayingProgress()
-    sendPlaybackState("stopped")
+    performStop()
     sendEvent(withName: "remote-stop", body: nil)
   }
 
