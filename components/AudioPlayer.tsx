@@ -551,11 +551,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       if (pendingSeekPosition !== null) return pendingSeekPosition;
       if (isViewOnly) return viewOnlyPosition ?? position;
 
-      // When stopped and position is close to duration, snap to duration
-      // (VLC often stops slightly before the actual end)
-      if (!isPlaying && hasFiniteDuration && duration - position < 1 && position > 0) {
-        return duration;
-      }
       if (!isPlaying) return position;
 
       const elapsedMs = Date.now() - lastProgressAtRef.current;
