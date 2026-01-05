@@ -153,17 +153,14 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
   // Shared helper for configuring player with media (used by both AVURLAsset and VLC probe paths)
   private func configurePlayerWithMedia(_ media: VLCMedia, title: String?, urlString: String, autoplay: Bool, resolver: @escaping RCTPromiseResolveBlock) {
-    // Use VLC's start-time option for cleaner initial positioning
-    // Note: pendingStartPosition is NOT consumed here - emitStreamReady() will use and consume it
+    // pendingStartPosition is kept for emitStreamReady() to seek after stream loads
     var startPosition: Double = 0
     var needsPreload = false
 
     if let startPos = pendingStartPosition, startPos > 0 {
-      media.addOption("start-time=\(startPos)")
       startPosition = startPos
-      // Don't nil pendingStartPosition - emitStreamReady() will consume it and verify positioning
 
-      // If not autoplaying, we need to do a silent preload to position the stream
+      // If not autoplaying, we need to do a silent preload to load the stream
       needsPreload = !autoplay
       if needsPreload {
         isPreloading = true
@@ -172,7 +169,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     }
 
     // Emit playback-progress immediately so UI shows the correct initial position
-    // (stream-ready will be emitted by emitStreamReady() when VLC reports valid position)
+    // (stream-ready will be emitted by emitStreamReady() when VLC reports valid position,
+    // which will then seek to pendingStartPosition)
     if startPosition > 0 {
       lastStablePosition = startPosition
       sendEvent(withName: "playback-progress", body: [
