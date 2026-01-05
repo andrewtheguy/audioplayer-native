@@ -69,7 +69,7 @@ export type Progress = {
 
 export type PlaybackState = { state: State };
 export type PlaybackIntent = { playing: boolean };
-export type ProbeResult = { isLive: boolean; duration: number };
+export type StreamReadyInfo = { position: number; duration: number; isLive: boolean };
 
 export type HlsPlayerEvent =
   | "remote-play"
@@ -252,15 +252,6 @@ export async function getProgress(): Promise<Progress> {
   };
 }
 
-export async function probe(url: string): Promise<ProbeResult> {
-  ensureIOS();
-  const result = await NativeHlsPlayer.probe(url);
-  return {
-    isLive: Boolean(result?.isLive),
-    duration: Number(result?.duration ?? 0),
-  };
-}
-
 export async function getPlaybackState(): Promise<PlaybackState> {
   ensureIOS();
   return playbackState;
@@ -325,15 +316,21 @@ export function usePlaybackIntent(): PlaybackIntent {
   return intent;
 }
 
-export function useStreamReady(): boolean {
-  const [ready, setReady] = useState(false);
+export function useStreamReady(): StreamReadyInfo | null {
+  const [streamInfo, setStreamInfo] = useState<StreamReadyInfo | null>(null);
 
   useEffect(() => {
-    const readySub = emitter.addListener("stream-ready", () => setReady(true));
+    const readySub = emitter.addListener("stream-ready", (payload?: { position?: number; duration?: number; isLive?: boolean }) => {
+      setStreamInfo({
+        position: Number(payload?.position ?? 0),
+        duration: Number(payload?.duration ?? 0),
+        isLive: Boolean(payload?.isLive),
+      });
+    });
     // Reset when playback state becomes none or stopped
     const stateSub = emitter.addListener("playback-state", (payload?: { state?: string }) => {
       if (payload?.state === "none" || payload?.state === "stopped") {
-        setReady(false);
+        setStreamInfo(null);
       }
     });
     return () => {
@@ -342,7 +339,7 @@ export function useStreamReady(): boolean {
     };
   }, []);
 
-  return ready;
+  return streamInfo;
 }
 
 export function useSeeking(): boolean {
@@ -373,7 +370,6 @@ const TrackPlayer = {
   getProgress,
   getPlaybackState,
   getActiveTrack,
-  probe,
   addEventListener,
 };
 

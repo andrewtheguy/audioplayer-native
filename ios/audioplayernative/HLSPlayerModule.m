@@ -18,8 +18,5 @@ RCT_EXTERN_METHOD(reset:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseReje
 RCT_EXTERN_METHOD(seekTo:(NSNumber *)position resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)rejecter)
 RCT_EXTERN_METHOD(getProgress:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)rejecter)
 RCT_EXTERN_METHOD(setNowPlaying:(NSDictionary *)options)
-RCT_EXTERN_METHOD(probe:(NSString *)urlString
-                resolver:(RCTPromiseResolveBlock)resolve
-                rejecter:(RCTPromiseRejectBlock)rejecter)
 
 @end

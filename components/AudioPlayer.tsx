@@ -4,7 +4,7 @@ import { useNostrSession } from "@/hooks/useNostrSession";
 import type { HistoryEntry } from "@/lib/history";
 import { getHistory, saveHistory } from "@/lib/history";
 import * as TrackPlayer from "@/services/HlsTrackPlayer";
-import { State, usePlaybackIntent, usePlaybackState, useProgress } from "@/services/HlsTrackPlayer";
+import { State, usePlaybackIntent, usePlaybackState, useProgress, useStreamReady } from "@/services/HlsTrackPlayer";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import Slider from "@react-native-community/slider";
 import {
@@ -75,6 +75,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const { position, duration: vlcDuration, seeking: isSeeking } = useProgress(200);
     const playbackState = usePlaybackState();
     const playbackIntent = usePlaybackIntent();
+    const streamInfo = useStreamReady();
     const hasActiveTrack = Boolean(nowPlayingUrl);
     // Use VLC duration if available, otherwise fall back to probe duration
     const duration = vlcDuration > 0 ? vlcDuration : probeDuration;
@@ -108,6 +109,15 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     useEffect(() => {
       isLiveStreamRef.current = isLiveStream;
     }, [isLiveStream]);
+
+    // Update isLiveStream and probeDuration from VLC stream-ready event
+    useEffect(() => {
+      if (streamInfo) {
+        setIsLiveStream(streamInfo.isLive);
+        isLiveStreamRef.current = streamInfo.isLive;
+        setProbeDuration(streamInfo.duration > 0 ? streamInfo.duration : 0);
+      }
+    }, [streamInfo]);
 
     useEffect(() => {
       if (playbackState.state !== State.Stopped) return;
@@ -251,12 +261,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         setError(null);
 
         try {
-          const probe = await TrackPlayer.probe(urlToLoad);
-          const live = Boolean(probe?.isLive);
-          const probeStreamDuration = Number(probe?.duration ?? 0);
-          setIsLiveStream(live);
-          isLiveStreamRef.current = live;
-          setProbeDuration(probeStreamDuration > 0 ? probeStreamDuration : 0);
+          // Reset state - actual values will come from stream-ready event
+          setIsLiveStream(false);
+          isLiveStreamRef.current = false;
+          setProbeDuration(0);
 
           // Reset the player and add the new track
           await TrackPlayer.reset();

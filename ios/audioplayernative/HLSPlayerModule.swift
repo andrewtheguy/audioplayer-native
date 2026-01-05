@@ -244,39 +244,6 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     }
   }
 
-  @objc
-  func probe(_ urlString: String, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
-    guard let url = URL(string: urlString) else {
-      reject("invalid_url", "Invalid URL", nil)
-      return
-    }
-
-    let asset = AVURLAsset(url: url)
-    let key = "duration"
-
-    asset.loadValuesAsynchronously(forKeys: [key]) {
-      var error: NSError?
-      let status = asset.statusOfValue(forKey: key, error: &error)
-
-      DispatchQueue.main.async {
-        if status != .loaded {
-          reject("probe_failed", "Unable to load stream metadata", error)
-          return
-        }
-
-        let durationSeconds = CMTimeGetSeconds(asset.duration)
-        // A stream is live only if duration is truly indefinite (NaN/Infinite)
-        // Duration of 0 just means metadata isn't fully loaded yet - not a live indicator
-        let isLive = asset.duration == .indefinite || !durationSeconds.isFinite
-        let hasValidDuration = durationSeconds.isFinite && durationSeconds > 0
-        resolve([
-          "isLive": isLive,
-          "duration": hasValidDuration ? durationSeconds : 0,
-        ])
-      }
-    }
-  }
-
   private func configureLifecycleObservers() {
     NotificationCenter.default.addObserver(
       self,
@@ -598,9 +565,12 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     // Emit stream-ready once we have a valid position (stream is loaded and ready)
     if !hasEmittedStreamReady && rawPosition >= 0 {
       hasEmittedStreamReady = true
+      // A stream is live if duration is not valid (0, negative, or infinite)
+      let isLive = duration <= 0 || !duration.isFinite
       sendEvent(withName: "stream-ready", body: [
         "position": rawPosition,
-        "duration": duration
+        "duration": duration,
+        "isLive": isLive
       ])
 
       // Handle pending start position
