@@ -377,6 +377,31 @@ export function useSeeking(): boolean {
   return seeking;
 }
 
+export interface PlaybackError {
+  message: string;
+  detail?: string;
+  code?: number;
+}
+
+export function usePlaybackError(): PlaybackError | null {
+  const [error, setError] = useState<PlaybackError | null>(null);
+
+  useEffect(() => {
+    const sub = emitter.addListener("playback-error", (payload?: { message?: string; detail?: string; code?: number }) => {
+      if (payload?.message) {
+        setError({
+          message: payload.message,
+          detail: payload.detail,
+          code: payload.code,
+        });
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
+  return error;
+}
+
 const TrackPlayer = {
   registerPlaybackService,
   updateOptions,

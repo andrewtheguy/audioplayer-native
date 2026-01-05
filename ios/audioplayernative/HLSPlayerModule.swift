@@ -132,8 +132,17 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
           // AVURLAsset probe succeeded, set up VLC player
           self.setupVLCPlayer(url: url, title: title, urlString: urlString, autoplay: autoplay, resolver: resolver)
+        } else if status == .failed, let error = error {
+          // AVURLAsset probe failed with error - report it and don't fallback
+          let errorMessage = self.extractHTTPError(from: error) ?? error.localizedDescription
+          self.sendEvent(withName: "playback-error", body: [
+            "message": "Stream loading failed",
+            "detail": errorMessage,
+            "code": error.code
+          ])
+          resolver(nil)
         } else {
-          // AVURLAsset failed, fallback to VLC probing
+          // AVURLAsset failed without error or cancelled, fallback to VLC probing
           self.probeResolver = resolver
           self.probeTitle = title
           self.probeUrlString = urlString
@@ -741,6 +750,65 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     return 0
   }
 
+  /// Extract a human-readable HTTP error message from an NSError
+  private func extractHTTPError(from error: NSError) -> String? {
+    // Check for underlying URL error with HTTP status code
+    if let underlyingError = error.userInfo[NSUnderlyingErrorKey] as? NSError {
+      return extractHTTPError(from: underlyingError)
+    }
+
+    // Check for HTTP response in error userInfo
+    if let response = error.userInfo["NSErrorFailingURLKey"] as? URL {
+      let urlString = response.absoluteString
+      // Common HTTP error codes
+      let httpCodes: [Int: String] = [
+        400: "Bad Request",
+        401: "Unauthorized",
+        403: "Forbidden",
+        404: "Not Found",
+        429: "Too Many Requests (Rate Limited)",
+        500: "Internal Server Error",
+        502: "Bad Gateway",
+        503: "Service Unavailable",
+        504: "Gateway Timeout"
+      ]
+      // Try to extract status code from error
+      if error.domain == NSURLErrorDomain {
+        // URL errors don't directly contain HTTP status, but we can provide context
+        switch error.code {
+        case NSURLErrorTimedOut:
+          return "Request timed out"
+        case NSURLErrorCannotConnectToHost:
+          return "Cannot connect to server"
+        case NSURLErrorNetworkConnectionLost:
+          return "Network connection lost"
+        case NSURLErrorNotConnectedToInternet:
+          return "No internet connection"
+        case NSURLErrorSecureConnectionFailed:
+          return "Secure connection failed"
+        default:
+          break
+        }
+      }
+    }
+
+    // Check for HTTP status code in error userInfo (some frameworks provide this)
+    if let statusCode = error.userInfo["_kCFStreamErrorCodeKey"] as? Int,
+       statusCode >= 400 {
+      let statusMessages: [Int: String] = [
+        429: "Rate limited (HTTP 429) - try again later",
+        403: "Access forbidden (HTTP 403)",
+        404: "Stream not found (HTTP 404)",
+        500: "Server error (HTTP 500)",
+        502: "Bad gateway (HTTP 502)",
+        503: "Service unavailable (HTTP 503)"
+      ]
+      return statusMessages[statusCode] ?? "HTTP error \(statusCode)"
+    }
+
+    return nil
+  }
+
   private func isLiveStream() -> Bool {
     // Trust probedIsLive from AVURLAsset - VLC may report duration for live streams
     if probedIsLive { return true }
@@ -855,7 +923,23 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     }
 
     if state == .error {
-      sendEvent(withName: "playback-error", body: ["message": "Playback failed"])
+      // Try to get more details about the error from VLC
+      var errorDetail = "Unknown error"
+      if let media = player?.media {
+        let mediaState = media.state
+        switch mediaState {
+        case .error:
+          errorDetail = "Media error - stream may be unavailable or rate limited"
+        case .nothingSpecial:
+          errorDetail = "Failed to load stream"
+        default:
+          errorDetail = "Playback error (media state: \(mediaState.rawValue))"
+        }
+      }
+      sendEvent(withName: "playback-error", body: [
+        "message": "Playback failed",
+        "detail": errorDetail
+      ])
     }
   }
 

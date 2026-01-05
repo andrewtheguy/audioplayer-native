@@ -4,7 +4,7 @@ import { useNostrSession } from "@/hooks/useNostrSession";
 import type { HistoryEntry } from "@/lib/history";
 import { getHistory, saveHistory } from "@/lib/history";
 import * as TrackPlayer from "@/services/HlsTrackPlayer";
-import { State, usePlaybackIntent, usePlaybackState, useProgress, useStreamReady } from "@/services/HlsTrackPlayer";
+import { State, usePlaybackError, usePlaybackIntent, usePlaybackState, useProgress, useStreamReady } from "@/services/HlsTrackPlayer";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import Slider from "@react-native-community/slider";
 import {
@@ -76,6 +76,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const playbackState = usePlaybackState();
     const playbackIntent = usePlaybackIntent();
     const streamInfo = useStreamReady();
+    const playbackError = usePlaybackError();
     const hasActiveTrack = Boolean(nowPlayingUrl);
     // Use VLC duration if available, otherwise fall back to probe duration
     const duration = vlcDuration > 0 ? vlcDuration : probeDuration;
@@ -118,6 +119,17 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         setProbeDuration(streamInfo.duration > 0 ? streamInfo.duration : 0);
       }
     }, [streamInfo]);
+
+    // Display native playback errors
+    useEffect(() => {
+      if (playbackError) {
+        const message = playbackError.detail
+          ? `${playbackError.message}: ${playbackError.detail}`
+          : playbackError.message;
+        setError(message);
+        setLoading(false);
+      }
+    }, [playbackError]);
 
     useEffect(() => {
       if (playbackState.state !== State.Stopped) return;

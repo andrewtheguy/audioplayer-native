@@ -66,7 +66,9 @@ export async function PlaybackService(): Promise<void> {
     TrackPlayer.addEventListener("playback-error", (event) => {
       if (!event) return;
       const message = typeof event.message === "string" ? event.message : "Unknown error";
-      console.error("Playback error:", message);
+      const detail = typeof event.detail === "string" ? event.detail : "";
+      const fullMessage = detail ? `${message}: ${detail}` : message;
+      console.error("Playback error:", fullMessage);
     }),
   ];
 
