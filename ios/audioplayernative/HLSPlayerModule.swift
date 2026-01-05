@@ -465,18 +465,26 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
 
   func mediaPlayerStateChanged(_ aNotification: Notification) {
     guard let state = player?.state else { return }
+
+    // When playback naturally ends or stops, update intent to not playing
+    if state == .ended || state == .stopped {
+      if desiredIsPlaying {
+        desiredIsPlaying = false
+        sendPlaybackIntent(false)
+      }
+      sendPlaybackState("stopped")
+      updateNowPlayingState(isPlaying: false)
+      return
+    }
+
     // If user intended pause, do not allow buffering/opening to override to "buffering".
     if desiredIsPlaying {
       let mapped = mapState(state)
       sendPlaybackState(mapped)
       updateNowPlayingState(isPlaying: state == .playing || state == .buffering || state == .opening)
     } else {
-      // When paused by intent, keep reporting paused unless fully stopped.
-      if state == .stopped || state == .ended {
-        sendPlaybackState("stopped")
-      } else {
-        sendPlaybackState("paused")
-      }
+      // When paused by intent, keep reporting paused
+      sendPlaybackState("paused")
       updateNowPlayingState(isPlaying: false)
     }
 
