@@ -735,7 +735,21 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
       ])
     }
 
-    // Emit stream-ready once we have a valid position (stream is loaded and ready)
+    // STREAM-READY EMISSION PATHS:
+    // There are two places that emit "stream-ready", guarded by hasEmittedStreamReady to prevent duplicates:
+    //
+    // 1. configurePlayerWithMedia(): Emits immediately when media is initialized. This path uses VLC's
+    //    "start-time" option (media.addOption("start-time=X")) for initial positioning. When autoplay
+    //    is false but a start position is set, a silent preload (mute → play → pause) positions the
+    //    stream without emitting sound. The pendingStartPosition is consumed here by the "start-time"
+    //    option, so no manual seek is needed.
+    //
+    // 2. mediaPlayerTimeChanged() (this block): Emits once a valid playback position is observed. This
+    //    is the fallback path when configurePlayerWithMedia() didn't emit (e.g., VLC probe path timing).
+    //    If pendingStartPosition is still set, a manual seek is performed here using seekTargetPosition
+    //    to guarantee precise positioning.
+    //
+    // After stream-ready is emitted, pendingAutoplay is handled: if true, playback starts automatically.
     if !hasEmittedStreamReady && rawPosition >= 0 {
       hasEmittedStreamReady = true
       // Use probed values from VLC media parsing
