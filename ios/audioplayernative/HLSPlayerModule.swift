@@ -43,6 +43,10 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   private var seekTimeoutCounter: Int = 0
   private var maxSeekTimeoutTicks: Int = 20  // ~5 seconds at 250ms intervals
 
+  // Preload state (silent play-pause to position stream without autoplay)
+  private var isPreloading: Bool = false
+  private var preloadTargetPosition: Double = 0
+
   deinit {
     NotificationCenter.default.removeObserver(self)
   }
@@ -152,10 +156,18 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
     // Use VLC's start-time option for cleaner initial positioning
     var startPosition: Double = 0
+    let needsPreload = !autoplay && self.pendingStartPosition != nil && self.pendingStartPosition! > 0
+
     if let startPos = self.pendingStartPosition, startPos > 0 {
       media.addOption("start-time=\(startPos)")
       startPosition = startPos
       self.pendingStartPosition = nil
+
+      // If not autoplaying, we need to do a silent preload to position the stream
+      if needsPreload {
+        self.isPreloading = true
+        self.preloadTargetPosition = startPos
+      }
     }
 
     // Emit stream-ready with start position
@@ -189,7 +201,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     }
     self.updateNowPlaying(title: title ?? "Stream", url: urlString, duration: self.probedDuration > 0 ? self.probedDuration : nil)
 
-    // Handle autoplay
+    // Handle autoplay or preload
     if autoplay {
       self.pendingAutoplay = false
       self.desiredIsPlaying = true
@@ -197,6 +209,18 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
       mediaPlayer.play()
       self.updateNowPlayingState(isPlaying: true)
       self.sendPlaybackState("playing")
+    } else if needsPreload {
+      // Silent preload: mute audio, play briefly to trigger start-time positioning, then pause
+      mediaPlayer.audio?.isMuted = true
+      mediaPlayer.play()
+
+      // Pause after a short delay (pause() doesn't work if called too quickly after play())
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+        guard let self = self, self.isPreloading else { return }
+        self.player?.pause()
+        // Keep muted - will unmute when user explicitly plays
+        self.sendPlaybackState("paused")
+      }
     }
 
     resolver(nil)
@@ -228,10 +252,18 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
       // Use VLC's start-time option for cleaner initial positioning (must be set before assigning to player)
       let shouldAutoplay = self.pendingAutoplay
       var startPosition: Double = 0
+      let needsPreload = !shouldAutoplay && self.pendingStartPosition != nil && self.pendingStartPosition! > 0
+
       if let startPos = self.pendingStartPosition, startPos > 0 {
         aMedia.addOption("start-time=\(startPos)")
         startPosition = startPos
         self.pendingStartPosition = nil
+
+        // If not autoplaying, we need to do a silent preload to position the stream
+        if needsPreload {
+          self.isPreloading = true
+          self.preloadTargetPosition = startPos
+        }
       }
 
       let mediaPlayer = VLCMediaPlayer()
@@ -265,7 +297,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
         ])
       }
 
-      // Handle autoplay
+      // Handle autoplay or preload
       if shouldAutoplay {
         self.pendingAutoplay = false
         self.desiredIsPlaying = true
@@ -273,6 +305,18 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
         mediaPlayer.play()
         self.updateNowPlayingState(isPlaying: true)
         self.sendPlaybackState("playing")
+      } else if needsPreload {
+        // Silent preload: mute audio, play briefly to trigger start-time positioning, then pause
+        mediaPlayer.audio?.isMuted = true
+        mediaPlayer.play()
+
+        // Pause after a short delay (pause() doesn't work if called too quickly after play())
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+          guard let self = self, self.isPreloading else { return }
+          self.player?.pause()
+          // Keep muted - will unmute when user explicitly plays
+          self.sendPlaybackState("paused")
+        }
       }
 
       // Clean up probe state
@@ -292,6 +336,14 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     initialize()
     desiredIsPlaying = true
     sendPlaybackIntent(true)
+
+    // Unmute audio if it was muted during preload
+    if let audio = player?.audio, audio.isMuted {
+      audio.isMuted = false
+    }
+
+    // Clear preloading state if still set
+    isPreloading = false
 
     // If player is in stopped/ended state, we need to seek before playing
     // VLC won't resume from an ended state without seeking first
@@ -357,6 +409,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     pendingStartPosition = nil
     pendingAutoplay = false
     hasEmittedStreamReady = false
+    isPreloading = false
+    preloadTargetPosition = 0
     nowPlayingInfo = [:]
     nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
     MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
@@ -544,6 +598,13 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   private func handleRemotePlay() {
     desiredIsPlaying = true
     sendPlaybackIntent(true)
+
+    // Unmute audio if it was muted during preload
+    if let audio = player?.audio, audio.isMuted {
+      audio.isMuted = false
+    }
+    isPreloading = false
+
     player?.play()
     updateNowPlayingState(isPlaying: true)
     sendPlaybackState("playing")
