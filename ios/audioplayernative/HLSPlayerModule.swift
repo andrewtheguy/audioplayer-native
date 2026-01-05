@@ -154,13 +154,14 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   // Shared helper for configuring player with media (used by both AVURLAsset and VLC probe paths)
   private func configurePlayerWithMedia(_ media: VLCMedia, title: String?, urlString: String, autoplay: Bool, resolver: @escaping RCTPromiseResolveBlock) {
     // Use VLC's start-time option for cleaner initial positioning
+    // Note: pendingStartPosition is NOT consumed here - emitStreamReady() will use and consume it
     var startPosition: Double = 0
     var needsPreload = false
 
     if let startPos = pendingStartPosition, startPos > 0 {
       media.addOption("start-time=\(startPos)")
       startPosition = startPos
-      pendingStartPosition = nil
+      // Don't nil pendingStartPosition - emitStreamReady() will consume it and verify positioning
 
       // If not autoplaying, we need to do a silent preload to position the stream
       needsPreload = !autoplay
@@ -170,15 +171,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
       }
     }
 
-    // Emit stream-ready with start position
-    hasEmittedStreamReady = true
-    sendEvent(withName: "stream-ready", body: [
-      "position": startPosition,
-      "duration": probedDuration,
-      "isLive": probedIsLive
-    ])
-
-    // Also emit playback-progress so UI shows the correct initial position
+    // Emit playback-progress immediately so UI shows the correct initial position
+    // (stream-ready will be emitted by emitStreamReady() when VLC reports valid position)
     if startPosition > 0 {
       lastStablePosition = startPosition
       sendEvent(withName: "playback-progress", body: [
@@ -450,6 +444,67 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   private func stopPositionTimer() {
     positionTimer?.invalidate()
     positionTimer = nil
+  }
+
+  // MARK: - Stream Ready Emission (single point of emission)
+
+  /// Emits "stream-ready" event if not already emitted. This is the sole emission point for stream-ready.
+  /// Handles: hasEmittedStreamReady guard, pendingStartPosition (manual seek if VLC start-time didn't position),
+  /// seekTargetPosition, and pendingAutoplay.
+  /// - Returns: true if this was the first emission (caller should return early), false if already emitted.
+  private func emitStreamReady() -> Bool {
+    guard !hasEmittedStreamReady else { return false }
+    hasEmittedStreamReady = true
+
+    let currentPos = safePosition()
+    let duration = safeDuration()
+
+    // Use pending start position for reported value if set, otherwise current position
+    let reportedPosition: Double
+    if let startPos = pendingStartPosition, startPos > 0 {
+      reportedPosition = startPos
+    } else {
+      reportedPosition = currentPos
+    }
+    let effectiveDuration = probedDuration > 0 ? probedDuration : duration
+    let effectiveIsLive = probedDuration > 0 ? probedIsLive : (effectiveDuration <= 0 || !effectiveDuration.isFinite)
+
+    sendEvent(withName: "stream-ready", body: [
+      "position": reportedPosition,
+      "duration": effectiveDuration,
+      "isLive": effectiveIsLive
+    ])
+
+    // If pending start position exists and VLC hasn't positioned there yet, perform manual seek
+    if let startPos = pendingStartPosition, startPos > 0 {
+      pendingStartPosition = nil
+
+      // Only seek if current position differs significantly from target (start-time option may have worked)
+      if abs(currentPos - startPos) > 1.0 {
+        seekTargetPosition = startPos
+        isSeeking = true
+        sendEvent(withName: "seek-started", body: ["targetPosition": startPos])
+        player?.time = VLCTime(int: Int32(startPos * 1000))
+        sendEvent(withName: "playback-progress", body: [
+          "position": startPos,
+          "duration": effectiveDuration,
+          "seeking": true
+        ])
+        return true
+      }
+    }
+
+    // Handle pending autoplay
+    if pendingAutoplay {
+      pendingAutoplay = false
+      desiredIsPlaying = true
+      sendPlaybackIntent(true)
+      player?.play()
+      updateNowPlayingState(isPlaying: true)
+      sendPlaybackState("playing")
+    }
+
+    return true
   }
 
   private func emitPeriodicPosition() {
@@ -735,58 +790,9 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
       ])
     }
 
-    // STREAM-READY EMISSION PATHS:
-    // There are two places that emit "stream-ready", guarded by hasEmittedStreamReady to prevent duplicates:
-    //
-    // 1. configurePlayerWithMedia(): Emits immediately when media is initialized. This path uses VLC's
-    //    "start-time" option (media.addOption("start-time=X")) for initial positioning. When autoplay
-    //    is false but a start position is set, a silent preload (mute → play → pause) positions the
-    //    stream without emitting sound. The pendingStartPosition is consumed here by the "start-time"
-    //    option, so no manual seek is needed.
-    //
-    // 2. mediaPlayerTimeChanged() (this block): Emits once a valid playback position is observed. This
-    //    is the fallback path when configurePlayerWithMedia() didn't emit (e.g., VLC probe path timing).
-    //    If pendingStartPosition is still set, a manual seek is performed here using seekTargetPosition
-    //    to guarantee precise positioning.
-    //
-    // After stream-ready is emitted, pendingAutoplay is handled: if true, playback starts automatically.
-    if !hasEmittedStreamReady && rawPosition >= 0 {
-      hasEmittedStreamReady = true
-      // Use probed values from VLC media parsing
-      // Fall back to current VLC duration if probed duration is 0 but VLC has a valid duration
-      let effectiveDuration = probedDuration > 0 ? probedDuration : duration
-      let effectiveIsLive = probedDuration > 0 ? probedIsLive : (duration <= 0 || !duration.isFinite)
-      sendEvent(withName: "stream-ready", body: [
-        "position": rawPosition,
-        "duration": effectiveDuration,
-        "isLive": effectiveIsLive
-      ])
-
-      // Handle pending start position
-      if let startPos = pendingStartPosition, startPos > 0 {
-        pendingStartPosition = nil
-        seekTargetPosition = startPos
-        isSeeking = true
-        sendEvent(withName: "seek-started", body: ["targetPosition": startPos])
-        let millis = Int32(startPos * 1000)
-        player?.time = VLCTime(int: millis)
-        sendEvent(withName: "playback-progress", body: [
-          "position": startPos,
-          "duration": duration,
-          "seeking": true
-        ])
-        return
-      }
-
-      // Handle pending autoplay (if no start position to seek to)
-      if pendingAutoplay {
-        pendingAutoplay = false
-        desiredIsPlaying = true
-        sendPlaybackIntent(true)
-        player?.play()
-        updateNowPlayingState(isPlaying: true)
-        sendPlaybackState("playing")
-      }
+    // Emit stream-ready via centralized helper (handles hasEmittedStreamReady guard,
+    // pendingStartPosition verification/seek, and pendingAutoplay)
+    if emitStreamReady() {
       return
     }
 
