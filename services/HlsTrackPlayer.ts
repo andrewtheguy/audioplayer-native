@@ -64,11 +64,12 @@ export type Progress = {
   position: number;
   duration: number;
   buffered?: number;
+  seeking?: boolean;
 };
 
 export type PlaybackState = { state: State };
 export type PlaybackIntent = { playing: boolean };
-export type ProbeResult = { isLive: boolean; duration: number };
+export type StreamReadyInfo = { position: number; duration: number; isLive: boolean };
 
 export type HlsPlayerEvent =
   | "remote-play"
@@ -82,7 +83,16 @@ export type HlsPlayerEvent =
   | "playback-error"
   | "playback-state"
   | "playback-progress"
-  | "playback-intent";
+  | "playback-intent"
+  | "stream-ready"
+  | "stream-info"
+  | "seek-started"
+  | "seek-completed";
+
+export type AddOptions = {
+  startPosition?: number;
+  autoplay?: boolean;
+};
 
 type EventListener = (payload?: any) => void;
 
@@ -182,16 +192,21 @@ export async function setupPlayer(_options?: {
   await NativeHlsPlayer.initialize();
 }
 
-export async function add(track: Track): Promise<void> {
+export async function add(track: Track, options?: AddOptions): Promise<void> {
   ensureIOS();
   activeTrack = track;
-  await NativeHlsPlayer.load(track.url, track.title ?? track.url, null);
+  await NativeHlsPlayer.load(
+    track.url,
+    track.title ?? track.url,
+    options?.startPosition ?? null,
+    options?.autoplay ?? false
+  );
   await NativeHlsPlayer.setNowPlaying({
     title: track.title ?? "Stream",
     artist: track.artist ?? "",
     url: track.url,
   });
-  emitPlaybackState(State.Ready);
+  // Don't emit Ready immediately - native will emit stream-ready when actually ready
 }
 
 export async function play(): Promise<void> {
@@ -238,15 +253,6 @@ export async function getProgress(): Promise<Progress> {
   };
 }
 
-export async function probe(url: string): Promise<ProbeResult> {
-  ensureIOS();
-  const result = await NativeHlsPlayer.probe(url);
-  return {
-    isLive: Boolean(result?.isLive),
-    duration: Number(result?.duration ?? 0),
-  };
-}
-
 export async function getPlaybackState(): Promise<PlaybackState> {
   ensureIOS();
   return playbackState;
@@ -277,8 +283,8 @@ export function usePlaybackState(): PlaybackState {
   return state;
 }
 
-export function useProgress(updateInterval: number = 250): Progress {
-  const [progress, setProgress] = useState<Progress>({ position: 0, duration: 0, buffered: 0 });
+export function useProgress(): Progress {
+  const [progress, setProgress] = useState<Progress>({ position: 0, duration: 0, buffered: 0, seeking: false });
 
   useEffect(() => {
     const sub = emitter.addListener("playback-progress", (payload?: Progress) => {
@@ -286,27 +292,14 @@ export function useProgress(updateInterval: number = 250): Progress {
         position: Number(payload?.position ?? 0),
         duration: Number(payload?.duration ?? 0),
         buffered: Number(payload?.buffered ?? 0),
+        seeking: Boolean(payload?.seeking),
       });
     });
 
-    // Polling causes jitter/fighting with events. Since we don't use buffered currently,
-    // and events provide position/duration, we can skip polling or reduce it significantly.
-    // If buffered is needed later, we should only update buffered from polling.
-    /*
-    const timer = setInterval(() => {
-      void getProgress()
-        .then((p) => setProgress(p))
-        .catch(() => {
-          // ignore polling failures
-        });
-    }, Math.max(250, updateInterval));
-    */
-
     return () => {
       sub.remove();
-      // clearInterval(timer);
     };
-  }, [updateInterval]);
+  }, []);
 
   return progress;
 }
@@ -324,6 +317,56 @@ export function usePlaybackIntent(): PlaybackIntent {
   return intent;
 }
 
+export function useStreamReady(): StreamReadyInfo | null {
+  const [streamInfo, setStreamInfo] = useState<StreamReadyInfo | null>(null);
+
+  useEffect(() => {
+    const readySub = emitter.addListener("stream-ready", (payload?: { position?: number; duration?: number; isLive?: boolean }) => {
+      setStreamInfo({
+        position: Number(payload?.position ?? 0),
+        duration: Number(payload?.duration ?? 0),
+        isLive: Boolean(payload?.isLive),
+      });
+    });
+    // Listen for stream-info updates (e.g., when duration becomes available for HLS)
+    const infoSub = emitter.addListener("stream-info", (payload?: { duration?: number; isLive?: boolean }) => {
+      setStreamInfo((prev) => prev ? {
+        ...prev,
+        duration: Number(payload?.duration ?? prev.duration),
+        isLive: Boolean(payload?.isLive),
+      } : null);
+    });
+    // Reset when playback state becomes none or stopped
+    const stateSub = emitter.addListener("playback-state", (payload?: { state?: string }) => {
+      if (payload?.state === "none" || payload?.state === "stopped") {
+        setStreamInfo(null);
+      }
+    });
+    return () => {
+      readySub.remove();
+      infoSub.remove();
+      stateSub.remove();
+    };
+  }, []);
+
+  return streamInfo;
+}
+
+export function useSeeking(): boolean {
+  const [seeking, setSeeking] = useState(false);
+
+  useEffect(() => {
+    const startSub = emitter.addListener("seek-started", () => setSeeking(true));
+    const endSub = emitter.addListener("seek-completed", () => setSeeking(false));
+    return () => {
+      startSub.remove();
+      endSub.remove();
+    };
+  }, []);
+
+  return seeking;
+}
+
 const TrackPlayer = {
   registerPlaybackService,
   updateOptions,
@@ -337,7 +380,6 @@ const TrackPlayer = {
   getProgress,
   getPlaybackState,
   getActiveTrack,
-  probe,
   addEventListener,
 };
 

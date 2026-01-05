@@ -4,7 +4,7 @@ import { useNostrSession } from "@/hooks/useNostrSession";
 import type { HistoryEntry } from "@/lib/history";
 import { getHistory, saveHistory } from "@/lib/history";
 import * as TrackPlayer from "@/services/HlsTrackPlayer";
-import { State, usePlaybackIntent, usePlaybackState, useProgress } from "@/services/HlsTrackPlayer";
+import { State, usePlaybackIntent, usePlaybackState, useProgress, useStreamReady } from "@/services/HlsTrackPlayer";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import Slider from "@react-native-community/slider";
 import {
@@ -67,19 +67,15 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     // Scrubbing state - when true, we show scrub position instead of actual position
     const [isScrubbing, setIsScrubbing] = useState(false);
     const [scrubPosition, setScrubPosition] = useState(0);
-    const [pendingSeekPosition, setPendingSeekPosition] = useState<number | null>(null);
-    const lastSeekAtRef = useRef(0);
-    const lastProgressAtRef = useRef(Date.now());
-    const lastProgressPosRef = useRef(0);
-    const [nowTick, setNowTick] = useState(Date.now());
     const [viewOnlyPosition, setViewOnlyPosition] = useState<number | null>(null);
     const [isLiveStream, setIsLiveStream] = useState(false);
     const [probeDuration, setProbeDuration] = useState<number>(0);
 
     // TrackPlayer hooks for real-time updates
-    const { position, duration: vlcDuration } = useProgress(200);
+    const { position, duration: vlcDuration, seeking: isSeeking } = useProgress(200);
     const playbackState = usePlaybackState();
     const playbackIntent = usePlaybackIntent();
+    const streamInfo = useStreamReady();
     const hasActiveTrack = Boolean(nowPlayingUrl);
     // Use VLC duration if available, otherwise fall back to probe duration
     const duration = vlcDuration > 0 ? vlcDuration : probeDuration;
@@ -97,8 +93,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const currentTitleRef = useRef<string | null>(null);
     const lastAutoSaveAtRef = useRef(0);
     const isLiveStreamRef = useRef(false);
-    const expectedResumeRef = useRef(0);
-    const pendingStartRef = useRef<number | null>(null);
 
     const session = useNostrSession({
       secret,
@@ -116,16 +110,20 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       isLiveStreamRef.current = isLiveStream;
     }, [isLiveStream]);
 
+    // Update isLiveStream and probeDuration from VLC stream-ready event
+    useEffect(() => {
+      if (streamInfo) {
+        setIsLiveStream(streamInfo.isLive);
+        isLiveStreamRef.current = streamInfo.isLive;
+        setProbeDuration(streamInfo.duration > 0 ? streamInfo.duration : 0);
+      }
+    }, [streamInfo]);
+
     useEffect(() => {
       if (playbackState.state !== State.Stopped) return;
-      // Preserve pending seek when we're intentionally rehydrating/auto-seeking after a history click
-      if (pendingSeekPosition !== null) return;
-      setPendingSeekPosition(null);
-      setScrubPosition(0);
+      // Don't reset position when stopped - let it stay at the end like web player
       setIsScrubbing(false);
-      lastProgressPosRef.current = 0;
-      lastProgressAtRef.current = Date.now();
-    }, [playbackState.state, pendingSeekPosition]);
+    }, [playbackState.state]);
 
     useImperativeHandle(ref, () => ({
       enterPublishMode: () => syncRef.current?.startSession(),
@@ -149,18 +147,17 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       const titleToLoad = active?.title ?? currentTitleRef.current ?? undefined;
 
       await TrackPlayer.reset();
-      await TrackPlayer.add({
-        id: urlToLoad,
-        url: urlToLoad,
-        title: titleToLoad || "Stream",
-        artist: urlToLoad,
-      });
-
-      const resumePos = pendingSeekPosition ?? position;
-      if (typeof resumePos === "number" && Number.isFinite(resumePos) && resumePos > 0) {
-        await TrackPlayer.seekTo(resumePos);
-      }
-    }, [pendingSeekPosition, playbackState.state, position]);
+      // Start from beginning when rehydrating after stop (like web player)
+      await TrackPlayer.add(
+        {
+          id: urlToLoad,
+          url: urlToLoad,
+          title: titleToLoad || "Stream",
+          artist: urlToLoad,
+        },
+        { startPosition: 0, autoplay: false }
+      );
+    }, [playbackState.state]);
 
     const handlePlay = useCallback(async () => {
       if (isViewOnly) return;
@@ -190,23 +187,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         // Ignore seek failures
       }
     }, []);
-
-    useEffect(() => {
-      const target = pendingStartRef.current;
-      if (!target || target <= 0) return;
-
-      const readyLikeStates = [State.Ready, State.Playing, State.Buffering, State.Paused];
-      if (!readyLikeStates.includes(playbackState.state)) return;
-
-      pendingStartRef.current = null;
-      void (async () => {
-        try {
-          await TrackPlayer.seekTo(target);
-        } catch {
-          // ignore seek failures
-        }
-      })();
-    }, [playbackState.state]);
 
     // Stop and clear the player when session becomes inactive to avoid background audio
     useEffect(() => {
@@ -264,12 +244,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       if (!isPlaying || isViewOnly || isLiveStreamRef.current) return;
       if (!currentUrlRef.current) return;
 
-      const expected = expectedResumeRef.current;
-      if (expected > 0 && position < expected - 0.5) return;
-      if (expected > 0 && position >= expected - 0.5) {
-        expectedResumeRef.current = 0;
-      }
-
       if (Date.now() - lastAutoSaveAtRef.current >= 5000) {
         lastAutoSaveAtRef.current = Date.now();
         saveHistoryEntry(position);
@@ -280,56 +254,46 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       async (
         urlToLoad: string,
         resolvedTitle?: string,
-        options?: { skipInitialSave?: boolean; startPosition?: number | null }
+        options?: { skipInitialSave?: boolean; startPosition?: number | null; autoPlay?: boolean }
       ) => {
         if (!urlToLoad) return;
         setLoading(true);
         setError(null);
 
         try {
-          const probe = await TrackPlayer.probe(urlToLoad);
-          const live = Boolean(probe?.isLive);
-          const probeStreamDuration = Number(probe?.duration ?? 0);
-          setIsLiveStream(live);
-          isLiveStreamRef.current = live;
-          setProbeDuration(probeStreamDuration > 0 ? probeStreamDuration : 0);
-
           // Reset the player and add the new track
+          // Live status and duration will come from stream-ready event (native probes with AVURLAsset, fallback to VLC)
           await TrackPlayer.reset();
 
-          await TrackPlayer.add({
-            id: urlToLoad,
-            url: urlToLoad,
-            title: resolvedTitle || "Stream",
-            artist: urlToLoad,
-          });
+          const startPosition = options?.startPosition ?? null;
+          const validStartPosition = Number.isFinite(startPosition) && (startPosition as number) > 0
+            ? (startPosition as number)
+            : undefined;
+
+          // Pass startPosition and autoplay to native - it handles seeking and autoplay
+          await TrackPlayer.add(
+            {
+              id: urlToLoad,
+              url: urlToLoad,
+              title: resolvedTitle || "Stream",
+              artist: urlToLoad,
+            },
+            {
+              startPosition: validStartPosition,
+              autoplay: options?.autoPlay ?? false,
+            }
+          );
 
           currentUrlRef.current = urlToLoad;
           currentTitleRef.current = resolvedTitle ?? null;
           setNowPlayingUrl(urlToLoad);
           setNowPlayingTitle(resolvedTitle ?? null);
 
-          // Seek to start position if provided
-          const startPosition = options?.startPosition ?? null;
-          if (Number.isFinite(startPosition) && (startPosition as number) > 0) {
-            expectedResumeRef.current = startPosition as number;
-            pendingStartRef.current = startPosition as number;
-            setPendingSeekPosition(startPosition as number);
-            setScrubPosition(startPosition as number);
-            lastProgressPosRef.current = startPosition as number;
-            lastProgressAtRef.current = Date.now();
-          } else {
-            expectedResumeRef.current = 0;
-            pendingStartRef.current = null;
-          }
-
           if (!options?.skipInitialSave) {
             saveHistoryEntry(0, { allowLive: true });
           }
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to load audio");
-          pendingStartRef.current = null;
-          expectedResumeRef.current = 0;
         } finally {
           setLoading(false);
         }
@@ -362,29 +326,13 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         }
 
         const start = Number.isFinite(entry.position) ? Math.max(0, entry.position) : 0;
-        expectedResumeRef.current = start;
 
-        // Optimistically reflect the saved position in UI before VLC reports progress
-        setPendingSeekPosition(start > 0 ? start : null);
-        setScrubPosition(start);
-        lastProgressPosRef.current = start;
-        lastProgressAtRef.current = Date.now();
-        pendingStartRef.current = start > 0 ? start : null;
-
-        void (async () => {
-          await loadUrl(entry.url, entry.title, {
-            skipInitialSave: true,
-            startPosition: start,
-          });
-
-          if (options?.autoPlay) {
-            try {
-              await TrackPlayer.play();
-            } catch {
-              // ignore autoplay failures
-            }
-          }
-        })();
+        // Native handles seeking to start position and autoplay
+        void loadUrl(entry.url, entry.title, {
+          skipInitialSave: true,
+          startPosition: start,
+          autoPlay: options?.autoPlay ?? false,
+        });
       },
       [applyHistoryDisplay, isViewOnly, loadUrl]
     );
@@ -442,23 +390,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       }
     };
 
-    const seekBy = async (deltaSeconds: number) => {
-      if (isViewOnly || isLiveStreamRef.current || !currentUrlRef.current) return;
-      
-      // Calculate current optimistic position for accurate relative seeking
-      let basePosition = position;
-      if (pendingSeekPosition !== null) {
-        basePosition = pendingSeekPosition;
-      } else if (isPlaying) {
-         const elapsedMs = Date.now() - lastProgressAtRef.current;
-         const elapsedSec = Math.max(0, elapsedMs) / 1000;
-         basePosition = lastProgressPosRef.current + elapsedSec;
-      }
-
-      const next = Math.max(0, basePosition + deltaSeconds);
-      setPendingSeekPosition(next);
-      lastSeekAtRef.current = Date.now();
-      await seekTo(next);
+    // Skip button logic disabled for now - to be reimplemented later
+    const seekBy = async (_deltaSeconds: number) => {
+      // No-op - skip functionality disabled
+      return;
     };
 
     // Reset auto-save timer when playback stops
@@ -467,19 +402,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         lastAutoSaveAtRef.current = 0;
       }
     }, [isPlaying]);
-
-    // Track last progress sample to allow optimistic UI updates between TrackPlayer ticks
-    useEffect(() => {
-      lastProgressPosRef.current = position;
-      lastProgressAtRef.current = Date.now();
-    }, [position]);
-
-    // Lightweight timer to drive optimistic position updates; only run while actively playing
-    useEffect(() => {
-      if (!isPlaying || isViewOnly) return;
-      const id = setInterval(() => setNowTick(Date.now()), 250);
-      return () => clearInterval(id);
-    }, [isPlaying, isViewOnly]);
 
     const handleRemoteSync = async (remoteHistory: HistoryEntry[]) => {
       const entry = remoteHistory[0];
@@ -585,66 +507,34 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     // Seek slider handlers
     const handleSeekStart = () => {
       setIsScrubbing(true);
-      setScrubPosition(position);
-      setPendingSeekPosition(null);
+      setScrubPosition(displayPosition);
     };
 
     const handleSeekChange = (value: number) => {
       setScrubPosition(value);
-      setPendingSeekPosition(value);
-      lastSeekAtRef.current = Date.now();
     };
 
     const handleSeekComplete = async (value: number) => {
       setScrubPosition(value);
-      setPendingSeekPosition(value);
-      lastSeekAtRef.current = Date.now();
       await seekTo(value);
       setIsScrubbing(false);
     };
 
-    // Keep showing target position until TrackPlayer reports the new position to avoid UI snap-back
-    useEffect(() => {
-      if (pendingSeekPosition === null) return;
-      const age = Date.now() - lastSeekAtRef.current;
-      // Increased tolerance and timeout to prevent jumping back during buffering
-      if (Math.abs(position - pendingSeekPosition) < 1.0 || age > 5000) {
-        setPendingSeekPosition(null);
-      }
-    }, [pendingSeekPosition, position]);
-
-    const optimisticPosition = useMemo(() => {
-      // Recompute every timer tick for smoother UI
-      void nowTick;
-
-      if (playbackState.state === State.Stopped) return 0;
-
+    // Display position - trust native position directly, use scrub position during slider interaction
+    // When stopped, keep showing the last position (like web player shows position at end)
+    const computedDisplayPosition = useMemo(() => {
       if (isScrubbing) return scrubPosition;
-      if (pendingSeekPosition !== null) return pendingSeekPosition;
       if (isViewOnly) return viewOnlyPosition ?? position;
-
-      if (!isPlaying) return position;
-
-      const elapsedMs = Date.now() - lastProgressAtRef.current;
-      const elapsedSec = Math.max(0, elapsedMs) / 1000;
-      const estimate = lastProgressPosRef.current + elapsedSec;
-      const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : Number.POSITIVE_INFINITY;
-      return Math.min(estimate, safeDuration);
+      return position;
     }, [
-      duration,
-      isPlaying,
       isScrubbing,
       isViewOnly,
-      nowTick,
-      pendingSeekPosition,
       position,
       scrubPosition,
       viewOnlyPosition,
-      playbackState.state,
     ]);
 
-    // Display position (scrub, then pending seek preview/optimistic, then live position)
-    const displayPosition = hasActiveTrack ? optimisticPosition : 0;
+    const displayPosition = hasActiveTrack ? computedDisplayPosition : 0;
     const displayDuration = hasActiveTrack && hasFiniteDuration ? duration : null;
     const displayPositionLabel = hasActiveTrack ? displayPosition : null;
 

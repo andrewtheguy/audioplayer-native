@@ -9,7 +9,9 @@
       "Bash(git -C /Users/it3/codes/andrew/audioplayer-native show:*)",
       "Bash(cat:*)",
       "mcp__github__get_file_contents",
-      "mcp__github__search_code"
+      "mcp__github__search_code",
+      "Bash(find:*)",
+      "Bash(npx tsc:*)"
     ]
   }
 }
