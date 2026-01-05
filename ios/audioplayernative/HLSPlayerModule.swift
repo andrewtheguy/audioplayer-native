@@ -25,6 +25,10 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   private var pendingAutoplay: Bool = false
   private var hasEmittedStreamReady = false
 
+  // Probed stream info (from AVURLAsset, more reliable for HLS than VLC)
+  private var probedIsLive: Bool = false
+  private var probedDuration: Double = 0
+
   deinit {
     NotificationCenter.default.removeObserver(self)
   }
@@ -76,7 +80,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   }
 
   @objc
-  func load(_ urlString: String, title: String?, startPosition: NSNumber?, autoplay: Bool, resolver: RCTPromiseResolveBlock, rejecter: RCTPromiseRejectBlock) {
+  func load(_ urlString: String, title: String?, startPosition: NSNumber?, autoplay: Bool, resolver: @escaping RCTPromiseResolveBlock, rejecter: @escaping RCTPromiseRejectBlock) {
     guard let url = URL(string: urlString) else {
       rejecter("invalid_url", "Invalid URL", nil)
       return
@@ -84,26 +88,51 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
 
     initialize()
 
-    let mediaPlayer = VLCMediaPlayer()
-    mediaPlayer.delegate = self
-    mediaPlayer.media = VLCMedia(url: url)
+    // Probe with AVURLAsset first (more reliable for HLS live detection than VLC)
+    let asset = AVURLAsset(url: url)
+    asset.loadValuesAsynchronously(forKeys: ["duration"]) { [weak self] in
+      DispatchQueue.main.async {
+        guard let self = self else { return }
 
-    // Store pending start position and autoplay - will be executed when stream is ready
-    if let start = startPosition?.doubleValue, start > 0 {
-      pendingStartPosition = start
-    } else {
-      pendingStartPosition = nil
+        var error: NSError?
+        let status = asset.statusOfValue(forKey: "duration", error: &error)
+
+        if status == .loaded {
+          let durationSeconds = CMTimeGetSeconds(asset.duration)
+          // A stream is live only if duration is truly indefinite (NaN/Infinite)
+          self.probedIsLive = asset.duration == .indefinite || !durationSeconds.isFinite
+          self.probedDuration = (durationSeconds.isFinite && durationSeconds > 0) ? durationSeconds : 0
+        } else {
+          // Probe failed, assume live until VLC tells us otherwise
+          self.probedIsLive = true
+          self.probedDuration = 0
+        }
+
+        // Now set up VLC player
+        let mediaPlayer = VLCMediaPlayer()
+        mediaPlayer.delegate = self
+        mediaPlayer.media = VLCMedia(url: url)
+
+        // Store pending start position and autoplay - will be executed when stream is ready
+        if let start = startPosition?.doubleValue, start > 0 {
+          self.pendingStartPosition = start
+        } else {
+          self.pendingStartPosition = nil
+        }
+        self.pendingAutoplay = autoplay
+        self.hasEmittedStreamReady = false
+
+        self.player = mediaPlayer
+        self.hasValidDuration = !self.probedIsLive && self.probedDuration > 0
+        self.nowPlayingInfo = [:]
+        self.nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = self.probedIsLive
+        if self.probedDuration > 0 {
+          self.nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = self.probedDuration
+        }
+        self.updateNowPlaying(title: title ?? "Stream", url: urlString, duration: self.probedDuration > 0 ? self.probedDuration : nil)
+        resolver(nil)
+      }
     }
-    pendingAutoplay = autoplay
-    hasEmittedStreamReady = false
-
-    player = mediaPlayer
-    hasValidDuration = false
-    nowPlayingInfo = [:]
-    // Set as live stream initially until we get valid duration from VLC
-    nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
-    updateNowPlaying(title: title ?? "Stream", url: urlString, duration: nil)
-    resolver(nil)
   }
 
   @objc
@@ -572,12 +601,14 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     // Emit stream-ready once we have a valid position (stream is loaded and ready)
     if !hasEmittedStreamReady && rawPosition >= 0 {
       hasEmittedStreamReady = true
-      // A stream is live if duration is not valid (0, negative, or infinite)
-      let isLive = duration <= 0 || !duration.isFinite
+      // Use probed values from AVURLAsset (more reliable for HLS than VLC's initial detection)
+      // Fall back to VLC duration if probed duration is 0 but VLC has a valid duration
+      let effectiveDuration = probedDuration > 0 ? probedDuration : duration
+      let effectiveIsLive = probedDuration > 0 ? probedIsLive : (duration <= 0 || !duration.isFinite)
       sendEvent(withName: "stream-ready", body: [
         "position": rawPosition,
-        "duration": duration,
-        "isLive": isLive
+        "duration": effectiveDuration,
+        "isLive": effectiveIsLive
       ])
 
       // Handle pending start position

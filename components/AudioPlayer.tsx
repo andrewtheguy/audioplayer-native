@@ -261,12 +261,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         setError(null);
 
         try {
-          // Reset state - actual values will come from stream-ready event
-          setIsLiveStream(false);
-          isLiveStreamRef.current = false;
-          setProbeDuration(0);
-
           // Reset the player and add the new track
+          // Live status and duration will come from stream-ready event (native probes with AVURLAsset)
           await TrackPlayer.reset();
 
           const startPosition = options?.startPosition ?? null;
