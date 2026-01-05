@@ -51,6 +51,24 @@ function formatTime(seconds: number | null): string {
     .padStart(2, "0")}`;
 }
 
+async function probeIsLive(url: string): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(url, { method: "GET", signal: controller.signal });
+    clearTimeout(timeout);
+
+    const text = await res.text();
+    const sample = text.slice(0, 50000).toUpperCase();
+    if (!sample.includes("#EXTM3U")) return false;
+    if (sample.includes("#EXT-X-PLAYLIST-TYPE:VOD")) return false;
+    if (sample.includes("#EXT-X-ENDLIST")) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   ({ secret, onSessionStatusChange }, ref) => {
     const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -73,6 +91,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const lastProgressPosRef = useRef(0);
     const [nowTick, setNowTick] = useState(Date.now());
     const [viewOnlyPosition, setViewOnlyPosition] = useState<number | null>(null);
+    const [isLiveStream, setIsLiveStream] = useState(false);
 
     // TrackPlayer hooks for real-time updates
     const { position, duration } = useProgress(200);
@@ -80,7 +99,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const playbackIntent = usePlaybackIntent();
     const hasActiveTrack = Boolean(nowPlayingUrl);
     const hasFiniteDuration = Number.isFinite(duration) && duration > 0;
-    const isLiveStream = hasActiveTrack && !hasFiniteDuration;
     const effectivePlaybackState = playbackState.state;
     const isPlayingNative = effectivePlaybackState === State.Playing;
     const isBuffering = effectivePlaybackState === State.Buffering;
@@ -155,6 +173,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         try {
           await TrackPlayer.stop();
           await TrackPlayer.reset();
+          setIsLiveStream(false);
+          isLiveStreamRef.current = false;
         } catch {
           // Ignore cleanup failures
         }
@@ -218,6 +238,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         setError(null);
 
         try {
+          const live = await probeIsLive(urlToLoad);
+          setIsLiveStream(live);
+          isLiveStreamRef.current = live;
+
           // Reset the player and add the new track
           await TrackPlayer.reset();
 
