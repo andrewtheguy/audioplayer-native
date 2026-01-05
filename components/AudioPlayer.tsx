@@ -323,6 +323,12 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
         const start = Number.isFinite(entry.position) ? Math.max(0, entry.position) : 0;
 
+        // Optimistically reflect the saved position in UI before VLC reports progress
+        setPendingSeekPosition(start > 0 ? start : null);
+        setScrubPosition(start);
+        lastProgressPosRef.current = start;
+        lastProgressAtRef.current = Date.now();
+
         void (async () => {
           await loadUrl(entry.url, entry.title, {
             skipInitialSave: true,
