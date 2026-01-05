@@ -67,6 +67,7 @@ export type Progress = {
 };
 
 export type PlaybackState = { state: State };
+export type PlaybackIntent = { playing: boolean };
 
 export type HlsPlayerEvent =
   | "remote-play"
@@ -79,7 +80,8 @@ export type HlsPlayerEvent =
   | "remote-previous"
   | "playback-error"
   | "playback-state"
-  | "playback-progress";
+  | "playback-progress"
+  | "playback-intent";
 
 type EventListener = (payload?: any) => void;
 
@@ -136,6 +138,10 @@ function emitPlaybackState(next: State): void {
   (emitter as any)?.emit?.("playback-state", { state: raw });
 }
 
+function emitPlaybackIntent(playing: boolean): void {
+  (emitter as any)?.emit?.("playback-intent", { playing });
+}
+
 function attachCoreListeners(): void {
   emitter.removeAllListeners("playback-state");
   emitter.addListener("playback-state", (payload?: { state?: string }) => {
@@ -190,24 +196,28 @@ export async function add(track: Track): Promise<void> {
 export async function play(): Promise<void> {
   ensureIOS();
   await NativeHlsPlayer.play();
+  emitPlaybackIntent(true);
   emitPlaybackState(State.Playing);
 }
 
 export async function pause(): Promise<void> {
   ensureIOS();
   await NativeHlsPlayer.pause();
+  emitPlaybackIntent(false);
   emitPlaybackState(State.Paused);
 }
 
 export async function stop(): Promise<void> {
   ensureIOS();
   await NativeHlsPlayer.stop();
+  emitPlaybackIntent(false);
   emitPlaybackState(State.Stopped);
 }
 
 export async function reset(): Promise<void> {
   ensureIOS();
   await NativeHlsPlayer.reset();
+  emitPlaybackIntent(false);
   emitPlaybackState(State.Stopped);
   activeTrack = null;
 }
@@ -284,6 +294,19 @@ export function useProgress(updateInterval: number = 250): Progress {
   }, [updateInterval]);
 
   return progress;
+}
+
+export function usePlaybackIntent(): PlaybackIntent {
+  const [intent, setIntent] = useState<PlaybackIntent>({ playing: false });
+
+  useEffect(() => {
+    const sub = emitter.addListener("playback-intent", (payload?: { playing?: boolean }) => {
+      setIntent({ playing: Boolean(payload?.playing) });
+    });
+    return () => sub.remove();
+  }, []);
+
+  return intent;
 }
 
 const TrackPlayer = {

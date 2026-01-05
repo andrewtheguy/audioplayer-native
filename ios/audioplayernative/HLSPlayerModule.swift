@@ -12,6 +12,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   private var isInitialized = false
   private var nowPlayingInfo: [String: Any] = [:]
   private var hasValidDuration = false
+  private var desiredIsPlaying = false
 
   deinit {
     NotificationCenter.default.removeObserver(self)
@@ -34,6 +35,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
       "playback-error",
       "playback-state",
       "playback-progress",
+      "playback-intent",
     ]
   }
 
@@ -86,6 +88,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   @objc
   func play(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
     initialize()
+    desiredIsPlaying = true
+    sendPlaybackIntent(true)
     player?.play()
     updateNowPlayingState(isPlaying: true)
     updateNowPlayingProgress()
@@ -95,6 +99,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
 
   @objc
   func pause(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+    desiredIsPlaying = false
+    sendPlaybackIntent(false)
     player?.pause()
     updateNowPlayingState(isPlaying: false)
     updateNowPlayingProgress()
@@ -108,6 +114,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
       player.stop()
       player.time = VLCTime(int: 0)
     }
+    desiredIsPlaying = false
+    sendPlaybackIntent(false)
     hasValidDuration = false
     nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = nil
     nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
@@ -121,6 +129,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   func reset(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
     player?.stop()
     player = nil
+    desiredIsPlaying = false
+    sendPlaybackIntent(false)
     hasValidDuration = false
     nowPlayingInfo = [:]
     nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
@@ -263,6 +273,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   }
 
   private func handleRemotePlay() {
+    desiredIsPlaying = true
+    sendPlaybackIntent(true)
     player?.play()
     updateNowPlayingState(isPlaying: true)
     sendPlaybackState("playing")
@@ -270,6 +282,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   }
 
   private func handleRemotePause() {
+    desiredIsPlaying = false
+    sendPlaybackIntent(false)
     player?.pause()
     updateNowPlayingState(isPlaying: false)
     sendPlaybackState("paused")
@@ -281,6 +295,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
       player.stop()
       player.time = VLCTime(int: 0)
     }
+    desiredIsPlaying = false
+    sendPlaybackIntent(false)
     hasValidDuration = false
     nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = nil
     nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
@@ -393,6 +409,10 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     sendEvent(withName: "playback-state", body: ["state": state])
   }
 
+  private func sendPlaybackIntent(_ playing: Bool) {
+    sendEvent(withName: "playback-intent", body: ["playing": playing])
+  }
+
   private func mapState(_ state: VLCMediaPlayerState) -> String {
     switch state {
     case .playing:
@@ -412,9 +432,20 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
 
   func mediaPlayerStateChanged(_ aNotification: Notification) {
     guard let state = player?.state else { return }
-    let mapped = mapState(state)
-    sendPlaybackState(mapped)
-    updateNowPlayingState(isPlaying: state == .playing)
+    // If user intended pause, do not allow buffering/opening to override to "buffering".
+    if desiredIsPlaying {
+      let mapped = mapState(state)
+      sendPlaybackState(mapped)
+      updateNowPlayingState(isPlaying: state == .playing || state == .buffering || state == .opening)
+    } else {
+      // When paused by intent, keep reporting paused unless fully stopped.
+      if state == .stopped || state == .ended {
+        sendPlaybackState("stopped")
+      } else {
+        sendPlaybackState("paused")
+      }
+      updateNowPlayingState(isPlaying: false)
+    }
 
     if state == .error {
       sendEvent(withName: "playback-error", body: ["message": "Playback failed"])

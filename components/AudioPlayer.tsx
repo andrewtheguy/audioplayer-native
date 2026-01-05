@@ -69,25 +69,26 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const [scrubPosition, setScrubPosition] = useState(0);
     const [pendingSeekPosition, setPendingSeekPosition] = useState<number | null>(null);
     const lastSeekAtRef = useRef(0);
-    const lastSeekTargetRef = useRef<number | null>(null);
     const lastProgressAtRef = useRef(Date.now());
     const lastProgressPosRef = useRef(0);
     const [nowTick, setNowTick] = useState(Date.now());
     const [viewOnlyPosition, setViewOnlyPosition] = useState<number | null>(null);
-    const [playbackOverride, setPlaybackOverride] = useState<State | null>(null);
 
     // TrackPlayer hooks for real-time updates
     const { position, duration } = useProgress(200);
     const playbackState = usePlaybackState();
+    const playbackIntent = usePlaybackIntent();
     const hasActiveTrack = Boolean(nowPlayingUrl);
     const hasFiniteDuration = Number.isFinite(duration) && duration > 0;
     const isLiveStream = hasActiveTrack && !hasFiniteDuration;
-    const effectivePlaybackState = playbackOverride ?? playbackState.state;
-    const isPlaying =
-      effectivePlaybackState === State.Playing || effectivePlaybackState === State.Buffering;
+    const effectivePlaybackState = playbackState.state;
+    const isPlayingNative = effectivePlaybackState === State.Playing;
+    const isBuffering = effectivePlaybackState === State.Buffering;
+    const isIntentPlaying = playbackIntent.playing;
+    const isPlaying = isPlayingNative;
     const effectiveStateLabel = State[effectivePlaybackState] ?? "Unknown";
     const nativeStateLabel = State[playbackState.state] ?? "Unknown";
-    const overrideStateLabel = playbackOverride !== null ? State[playbackOverride] ?? null : null;
+    const intentStateLabel = isIntentPlaying ? "Playing" : "Paused";
 
     const currentUrlRef = useRef<string | null>(null);
     const currentTitleRef = useRef<string | null>(null);
@@ -106,27 +107,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       isLiveStreamRef.current = isLiveStream;
     }, [isLiveStream]);
 
-    useEffect(() => {
-      if (playbackOverride === null) return;
-      if (playbackState.state === playbackOverride) {
-        setPlaybackOverride(null);
-      }
-    }, [playbackOverride, playbackState.state]);
-
-    useEffect(() => {
-      if (playbackOverride === null) return;
-      const id = setTimeout(() => setPlaybackOverride(null), 2000);
-      return () => clearTimeout(id);
-    }, [playbackOverride]);
-
-    // Fallback: if buffering persists for too long without movement, clear override to native state
-    useEffect(() => {
-      if (playbackOverride !== State.Buffering) return;
-      const id = setTimeout(() => {
-        setPlaybackOverride(null);
-      }, 4000);
-      return () => clearTimeout(id);
-    }, [playbackOverride]);
 
     useImperativeHandle(ref, () => ({
       enterPublishMode: () => syncRef.current?.startSession(),
@@ -142,22 +122,18 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     const handlePlay = useCallback(async () => {
       if (isViewOnly) return;
-      setPlaybackOverride(State.Playing);
       try {
         await TrackPlayer.play();
       } catch (err) {
-        setPlaybackOverride(null);
         setError(err instanceof Error ? err.message : "Playback error");
       }
     }, [isViewOnly]);
 
     const handlePause = useCallback(async () => {
       if (isViewOnly) return;
-      setPlaybackOverride(State.Paused);
       try {
         await TrackPlayer.pause();
       } catch (err) {
-        setPlaybackOverride(null);
         setError(err instanceof Error ? err.message : "Playback error");
       }
     }, [isViewOnly]);
@@ -179,7 +155,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         try {
           await TrackPlayer.stop();
           await TrackPlayer.reset();
-          setPlaybackOverride(null);
         } catch {
           // Ignore cleanup failures
         }
@@ -354,7 +329,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     const togglePlayPause = async () => {
       if (isViewOnly) return;
-      if (isPlaying) {
+      if (isIntentPlaying) {
         await handlePause();
       } else {
         await handlePlay();
@@ -366,8 +341,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       const next = Math.max(0, position + deltaSeconds);
       setPendingSeekPosition(next);
       lastSeekAtRef.current = Date.now();
-      lastSeekTargetRef.current = next;
-      setPlaybackOverride(State.Buffering);
       await seekTo(next);
     };
 
@@ -497,22 +470,18 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       setIsScrubbing(true);
       setScrubPosition(position);
       setPendingSeekPosition(null);
-      setPlaybackOverride(State.Buffering);
     };
 
     const handleSeekChange = (value: number) => {
       setScrubPosition(value);
       setPendingSeekPosition(value);
       lastSeekAtRef.current = Date.now();
-      lastSeekTargetRef.current = value;
     };
 
     const handleSeekComplete = async (value: number) => {
       setScrubPosition(value);
       setPendingSeekPosition(value);
       lastSeekAtRef.current = Date.now();
-      lastSeekTargetRef.current = value;
-      setPlaybackOverride(State.Buffering);
       await seekTo(value);
       setIsScrubbing(false);
     };
@@ -525,16 +494,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         setPendingSeekPosition(null);
       }
     }, [pendingSeekPosition, position]);
-
-    // Clear buffering override once playback reaches the seek target
-    useEffect(() => {
-      const target = lastSeekTargetRef.current;
-      if (target === null) return;
-      if (Math.abs(position - target) <= 0.35) {
-        setPlaybackOverride(State.Playing);
-        lastSeekTargetRef.current = null;
-      }
-    }, [position]);
 
     const optimisticPosition = useMemo(() => {
       // Recompute every timer tick for smoother UI
@@ -724,11 +683,11 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               <Text style={styles.nowPlayingUrl} numberOfLines={1}>
                 {nowPlayingUrl}
               </Text>
-              <Text style={styles.debugMeta}>
-                State: {effectiveStateLabel} (native: {nativeStateLabel}
-                {overrideStateLabel ? `, override: ${overrideStateLabel}` : ""}
-                ){isLiveStream ? " [live]" : ""}
-              </Text>
+              <Text style={styles.debugMeta}>Intent: {intentStateLabel}</Text>
+              <Text style={styles.debugMeta}>Native: {nativeStateLabel}</Text>
+              <Text style={styles.debugMeta}>Effective: {effectiveStateLabel}</Text>
+              {isBuffering ? <Text style={styles.debugMeta}>Buffering</Text> : null}
+              {isLiveStream ? <Text style={styles.debugMeta}>Live stream</Text> : null}
             </>
           ) : (
             <Text style={styles.nowPlayingTitle}>Nothing loaded</Text>
@@ -769,7 +728,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               disabled={isViewOnly}
             >
               <MaterialIcons
-                name={isPlaying ? "pause" : "play-arrow"}
+                name={isIntentPlaying ? "pause" : "play-arrow"}
                 size={26}
                 color="#F9FAFB"
               />
