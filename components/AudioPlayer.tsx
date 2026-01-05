@@ -391,6 +391,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     };
 
     const handleJumpBackward = async () => {
+      if (isLiveStream) return;
       try {
         await TrackPlayer.jumpBackward();
       } catch (err) {
@@ -399,6 +400,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     };
 
     const handleJumpForward = async () => {
+      if (isLiveStream) return;
       try {
         await TrackPlayer.jumpForward();
       } catch (err) {
@@ -516,15 +518,18 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     // Seek slider handlers
     const handleSeekStart = () => {
+      if (isLiveStream) return;
       setIsScrubbing(true);
       setScrubPosition(displayPosition);
     };
 
     const handleSeekChange = (value: number) => {
+      if (isLiveStream) return;
       setScrubPosition(value);
     };
 
     const handleSeekComplete = async (value: number) => {
+      if (isLiveStream) return;
       setScrubPosition(value);
       await seekTo(value);
       setIsScrubbing(false);
@@ -547,6 +552,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const displayPosition = hasActiveTrack ? computedDisplayPosition : 0;
     const displayDuration = hasActiveTrack && hasFiniteDuration ? duration : null;
     const displayPositionLabel = hasActiveTrack ? displayPosition : null;
+    const seekDisabled = controlsDisabled || isLiveStream || !hasActiveTrack || !hasFiniteDuration;
 
     if (isViewOnly) {
       const isLiveDisplay = false;
@@ -733,7 +739,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             onSlidingStart={handleSeekStart}
             onValueChange={handleSeekChange}
             onSlidingComplete={handleSeekComplete}
-            disabled={controlsDisabled || isLiveStream || !hasActiveTrack || !hasFiniteDuration}
+            disabled={seekDisabled}
             minimumTrackTintColor="#60A5FA"
             maximumTrackTintColor="#374151"
             thumbTintColor="#93C5FD"
@@ -741,9 +747,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
           <View style={[styles.row, styles.rowCentered]}>
             <Pressable
-              style={[styles.secondaryButton, controlsDisabled && styles.buttonDisabled]}
+              style={[styles.secondaryButton, seekDisabled && styles.buttonDisabled]}
               onPress={() => void handleJumpBackward()}
-              disabled={controlsDisabled}
+              disabled={seekDisabled}
             >
               <Text style={styles.secondaryButtonText}>-15s</Text>
             </Pressable>
@@ -759,9 +765,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               />
             </Pressable>
             <Pressable
-              style={[styles.secondaryButton, controlsDisabled && styles.buttonDisabled]}
+              style={[styles.secondaryButton, seekDisabled && styles.buttonDisabled]}
               onPress={() => void handleJumpForward()}
-              disabled={controlsDisabled}
+              disabled={seekDisabled}
             >
               <Text style={styles.secondaryButtonText}>+30s</Text>
             </Pressable>

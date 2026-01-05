@@ -309,6 +309,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     lastStablePosition = 0
     nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = nil
     nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
+    updateRemoteSeekAvailability(isLive: true)
     updateNowPlayingState(isPlaying: false)
     updateNowPlayingProgress()
     sendPlaybackState("stopped")
@@ -355,6 +356,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     nowPlayingInfo = [:]
     nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
     MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+    updateRemoteSeekAvailability(isLive: true)
     updateNowPlayingState(isPlaying: false)
     updateNowPlayingProgress()
     sendPlaybackState("none")
@@ -502,13 +504,16 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
       reportedPosition = currentPos
     }
     let effectiveDuration = probedDuration > 0 ? probedDuration : duration
-    let effectiveIsLive = probedDuration > 0 ? probedIsLive : (effectiveDuration <= 0 || !effectiveDuration.isFinite)
+    // Treat stream as live if we probed it as live, even if a sliding-window duration later appears.
+    let effectiveIsLive = probedIsLive || effectiveDuration <= 0 || !effectiveDuration.isFinite
 
     sendEvent(withName: "stream-ready", body: [
       "position": reportedPosition,
       "duration": effectiveDuration,
       "isLive": effectiveIsLive
     ])
+
+    updateRemoteSeekAvailability(isLive: effectiveIsLive)
 
     // If pending start position exists and VLC hasn't positioned there yet, perform manual seek
     if let startPos = pendingStartPosition, startPos > 0 {
@@ -599,33 +604,39 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
     commandCenter.skipForwardCommand.preferredIntervals = [NSNumber(value: forwardInterval)]
     commandCenter.skipBackwardCommand.preferredIntervals = [NSNumber(value: backwardInterval)]
-    commandCenter.skipForwardCommand.isEnabled = true
-    commandCenter.skipBackwardCommand.isEnabled = true
-    commandCenter.changePlaybackPositionCommand.isEnabled = true
+    updateRemoteSeekAvailability(isLive: isLiveStream())
 
     commandCenter.skipForwardCommand.addTarget { [weak self] _ in
-      self?.handleRemoteJumpForward()
+      guard let self = self, !self.isLiveStream() else { return .commandFailed }
+      self.handleRemoteJumpForward()
       return .success
     }
 
     commandCenter.skipBackwardCommand.addTarget { [weak self] _ in
-      self?.handleRemoteJumpBackward()
+      guard let self = self, !self.isLiveStream() else { return .commandFailed }
+      self.handleRemoteJumpBackward()
       return .success
     }
 
     commandCenter.nextTrackCommand.addTarget { [weak self] _ in
-      self?.handleRemoteNext()
+      guard let self = self, !self.isLiveStream() else { return .commandFailed }
+      self.handleRemoteNext()
       return .success
     }
 
     commandCenter.previousTrackCommand.addTarget { [weak self] _ in
-      self?.handleRemotePrevious()
+      guard let self = self, !self.isLiveStream() else { return .commandFailed }
+      self.handleRemotePrevious()
       return .success
     }
 
     commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
-      guard let positionEvent = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
-      self?.handleRemoteSeek(positionEvent.positionTime)
+      guard
+        let self = self,
+        !self.isLiveStream(),
+        let positionEvent = event as? MPChangePlaybackPositionCommandEvent
+      else { return .commandFailed }
+      self.handleRemoteSeek(positionEvent.positionTime)
       return .success
     }
   }
@@ -646,6 +657,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   }
 
   private func handleRemoteJumpForward() {
+    guard !isLiveStream() else { return }
     let current = effectivePosition()
     let duration = safeDuration()
     let target = duration > 0 ? min(current + forwardInterval, duration) : current + forwardInterval
@@ -654,6 +666,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   }
 
   private func handleRemoteJumpBackward() {
+    guard !isLiveStream() else { return }
     let current = effectivePosition()
     let target = max(0, current - backwardInterval)
     performSeek(to: target)
@@ -661,6 +674,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   }
 
   private func handleRemoteNext() {
+    guard !isLiveStream() else { return }
     let current = effectivePosition()
     let duration = safeDuration()
     let target = duration > 0 ? min(current + forwardInterval, duration) : current + forwardInterval
@@ -669,6 +683,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   }
 
   private func handleRemotePrevious() {
+    guard !isLiveStream() else { return }
     let current = effectivePosition()
     let target = max(0, current - backwardInterval)
     performSeek(to: target)
@@ -676,6 +691,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   }
 
   private func handleRemoteSeek(_ positionTime: TimeInterval) {
+    guard !isLiveStream() else { return }
     let target = max(0, positionTime)
     performSeek(to: target)
     sendEvent(withName: "remote-seek", body: ["position": target])
@@ -713,6 +729,23 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     }
     // Return 0 when duration is unknown - caller should handle this
     return 0
+  }
+
+  private func isLiveStream() -> Bool {
+    if probedIsLive { return true }
+    if hasValidDuration { return false }
+    let duration = safeDuration()
+    return duration <= 0 || !duration.isFinite
+  }
+
+  private func updateRemoteSeekAvailability(isLive: Bool) {
+    let commandCenter = MPRemoteCommandCenter.shared()
+    let enabled = !isLive
+    commandCenter.skipForwardCommand.isEnabled = enabled
+    commandCenter.skipBackwardCommand.isEnabled = enabled
+    commandCenter.changePlaybackPositionCommand.isEnabled = enabled
+    commandCenter.nextTrackCommand.isEnabled = enabled
+    commandCenter.previousTrackCommand.isEnabled = enabled
   }
 
   private func updateNowPlaying(title: String, artist: String = "", url: String = "", duration: Double? = nil) {
@@ -827,14 +860,23 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     // Once we get a valid duration, update Now Playing to non-live mode
     // and emit stream-info event to update isLive status
     if !hasValidDuration && duration > 0 {
-      hasValidDuration = true
-      nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = false
-      nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
-      // Emit stream-info to update isLive (now we know it's NOT live since we have duration)
-      sendEvent(withName: "stream-info", body: [
-        "duration": duration,
-        "isLive": false
-      ])
+      if probedIsLive {
+        // Live HLS streams may expose a sliding-window duration; keep live semantics intact.
+        sendEvent(withName: "stream-info", body: [
+          "duration": duration,
+          "isLive": true
+        ])
+        updateRemoteSeekAvailability(isLive: true)
+      } else {
+        hasValidDuration = true
+        nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = false
+        nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
+        sendEvent(withName: "stream-info", body: [
+          "duration": duration,
+          "isLive": false
+        ])
+        updateRemoteSeekAvailability(isLive: false)
+      }
     }
 
     // Emit stream-ready via centralized helper (handles hasEmittedStreamReady guard,
