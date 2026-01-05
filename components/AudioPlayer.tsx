@@ -109,6 +109,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const isViewOnly = session.sessionStatus !== "active";
     const syncRef = useRef<NostrSyncPanelHandle | null>(null);
     const lastSessionStatusRef = useRef<SessionStatus>(session.sessionStatus);
+    // Treat true loading separately from an unloaded/empty player state for clearer UI/debug
+    const isLoadingState = loading || effectivePlaybackState === State.Buffering;
+    const isUnloaded = effectivePlaybackState === State.None;
+    const controlsDisabled = isViewOnly || isLoadingState || isUnloaded;
 
     useEffect(() => {
       isLiveStreamRef.current = isLiveStream;
@@ -837,6 +841,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               <Text style={styles.debugMeta}>Effective: {effectiveStateLabel}</Text>
               <Text style={styles.debugMeta}>Duration: VLC={vlcDuration.toFixed(1)} Probe={probeDuration.toFixed(1)}</Text>
               {isBuffering ? <Text style={styles.debugMeta}>Buffering</Text> : null}
+              {isLoadingState ? <Text style={styles.debugMeta}>Loading</Text> : null}
+              {isUnloaded ? <Text style={styles.debugMeta}>Unloaded</Text> : null}
               {isLiveStream ? <Text style={styles.debugMeta}>Live stream</Text> : null}
             </>
           ) : (
@@ -858,7 +864,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             onSlidingStart={handleSeekStart}
             onValueChange={handleSeekChange}
             onSlidingComplete={handleSeekComplete}
-            disabled={isViewOnly || isLiveStream || !hasActiveTrack || !hasFiniteDuration}
+            disabled={controlsDisabled || isLiveStream || !hasActiveTrack || !hasFiniteDuration}
             minimumTrackTintColor="#60A5FA"
             maximumTrackTintColor="#374151"
             thumbTintColor="#93C5FD"
@@ -866,16 +872,16 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
           <View style={[styles.row, styles.rowCentered]}>
             <Pressable
-              style={[styles.secondaryButton, isViewOnly && styles.buttonDisabled]}
+              style={[styles.secondaryButton, controlsDisabled && styles.buttonDisabled]}
               onPress={() => void seekBy(-15)}
-              disabled={isViewOnly}
+              disabled={controlsDisabled}
             >
               <Text style={styles.secondaryButtonText}>-15s</Text>
             </Pressable>
             <Pressable
-              style={[styles.primaryButton, isViewOnly && styles.buttonDisabled]}
+              style={[styles.primaryButton, controlsDisabled && styles.buttonDisabled]}
               onPress={togglePlayPause}
-              disabled={isViewOnly}
+              disabled={controlsDisabled}
             >
               <MaterialIcons
                 name={isIntentPlaying ? "pause" : "play-arrow"}
@@ -884,9 +890,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               />
             </Pressable>
             <Pressable
-              style={[styles.secondaryButton, isViewOnly && styles.buttonDisabled]}
+              style={[styles.secondaryButton, controlsDisabled && styles.buttonDisabled]}
               onPress={() => void seekBy(30)}
-              disabled={isViewOnly}
+              disabled={controlsDisabled}
             >
               <Text style={styles.secondaryButtonText}>+30s</Text>
             </Pressable>
