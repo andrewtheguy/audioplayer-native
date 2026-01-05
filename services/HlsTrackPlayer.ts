@@ -289,6 +289,10 @@ export function useProgress(updateInterval: number = 250): Progress {
       });
     });
 
+    // Polling causes jitter/fighting with events. Since we don't use buffered currently,
+    // and events provide position/duration, we can skip polling or reduce it significantly.
+    // If buffered is needed later, we should only update buffered from polling.
+    /*
     const timer = setInterval(() => {
       void getProgress()
         .then((p) => setProgress(p))
@@ -296,10 +300,11 @@ export function useProgress(updateInterval: number = 250): Progress {
           // ignore polling failures
         });
     }, Math.max(250, updateInterval));
+    */
 
     return () => {
       sub.remove();
-      clearInterval(timer);
+      // clearInterval(timer);
     };
   }, [updateInterval]);
 

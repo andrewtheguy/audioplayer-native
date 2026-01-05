@@ -444,7 +444,18 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     const seekBy = async (deltaSeconds: number) => {
       if (isViewOnly || isLiveStreamRef.current || !currentUrlRef.current) return;
-      const next = Math.max(0, position + deltaSeconds);
+      
+      // Calculate current optimistic position for accurate relative seeking
+      let basePosition = position;
+      if (pendingSeekPosition !== null) {
+        basePosition = pendingSeekPosition;
+      } else if (isPlaying) {
+         const elapsedMs = Date.now() - lastProgressAtRef.current;
+         const elapsedSec = Math.max(0, elapsedMs) / 1000;
+         basePosition = lastProgressPosRef.current + elapsedSec;
+      }
+
+      const next = Math.max(0, basePosition + deltaSeconds);
       setPendingSeekPosition(next);
       lastSeekAtRef.current = Date.now();
       await seekTo(next);
@@ -596,7 +607,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     useEffect(() => {
       if (pendingSeekPosition === null) return;
       const age = Date.now() - lastSeekAtRef.current;
-      if (Math.abs(position - pendingSeekPosition) < 0.25 || age > 2000) {
+      // Increased tolerance and timeout to prevent jumping back during buffering
+      if (Math.abs(position - pendingSeekPosition) < 1.0 || age > 5000) {
         setPendingSeekPosition(null);
       }
     }, [pendingSeekPosition, position]);
