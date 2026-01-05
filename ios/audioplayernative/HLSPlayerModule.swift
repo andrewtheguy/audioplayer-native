@@ -29,6 +29,12 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   private var probedIsLive: Bool = false
   private var probedDuration: Double = 0
 
+  // Seek retry tracking
+  private var seekRetryCount: Int = 0
+  private var maxSeekRetries: Int = 3
+  private var seekTimeoutCounter: Int = 0
+  private var maxSeekTimeoutTicks: Int = 20  // ~5 seconds at 250ms intervals
+
   deinit {
     NotificationCenter.default.removeObserver(self)
   }
@@ -130,6 +136,35 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
           self.nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = self.probedDuration
         }
         self.updateNowPlaying(title: title ?? "Stream", url: urlString, duration: self.probedDuration > 0 ? self.probedDuration : nil)
+
+        // Emit stream-ready immediately after load with probed info
+        // Don't wait for VLC playback - we already have the info from AVURLAsset
+        self.hasEmittedStreamReady = true
+        self.sendEvent(withName: "stream-ready", body: [
+          "position": 0,
+          "duration": self.probedDuration,
+          "isLive": self.probedIsLive
+        ])
+
+        // Handle pending start position and autoplay immediately
+        if let startPos = self.pendingStartPosition, startPos > 0 {
+          self.pendingStartPosition = nil
+          self.seekTargetPosition = startPos
+          self.isSeeking = true
+          self.seekRetryCount = 0
+          self.seekTimeoutCounter = 0
+          self.sendEvent(withName: "seek-started", body: ["targetPosition": startPos])
+        }
+
+        if autoplay {
+          self.pendingAutoplay = false
+          self.desiredIsPlaying = true
+          self.sendPlaybackIntent(true)
+          mediaPlayer.play()
+          self.updateNowPlayingState(isPlaying: true)
+          self.sendPlaybackState("playing")
+        }
+
         resolver(nil)
       }
     }
