@@ -19,6 +19,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   private var seekTargetPosition: Double = 0
   private var lastStablePosition: Double = 0
   private var positionTimer: Timer?
+  private var seekDebounceWorkItem: DispatchWorkItem?
 
   // Pending start position and autoplay (set during load, executed when stream ready)
   private var pendingStartPosition: Double? = nil
@@ -43,6 +44,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
   deinit {
     stopPositionTimer()
+    seekDebounceWorkItem?.cancel()
     NotificationCenter.default.removeObserver(self)
   }
 
@@ -153,17 +155,14 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
   // Shared helper for configuring player with media (used by both AVURLAsset and VLC probe paths)
   private func configurePlayerWithMedia(_ media: VLCMedia, title: String?, urlString: String, autoplay: Bool, resolver: @escaping RCTPromiseResolveBlock) {
-    // Use VLC's start-time option for cleaner initial positioning
-    // Note: pendingStartPosition is NOT consumed here - emitStreamReady() will use and consume it
+    // pendingStartPosition is kept for emitStreamReady() to seek after stream loads
     var startPosition: Double = 0
     var needsPreload = false
 
     if let startPos = pendingStartPosition, startPos > 0 {
-      media.addOption("start-time=\(startPos)")
       startPosition = startPos
-      // Don't nil pendingStartPosition - emitStreamReady() will consume it and verify positioning
 
-      // If not autoplaying, we need to do a silent preload to position the stream
+      // If not autoplaying, we need to do a silent preload to load the stream
       needsPreload = !autoplay
       if needsPreload {
         isPreloading = true
@@ -172,7 +171,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     }
 
     // Emit playback-progress immediately so UI shows the correct initial position
-    // (stream-ready will be emitted by emitStreamReady() when VLC reports valid position)
+    // (stream-ready will be emitted by emitStreamReady() when VLC reports valid position,
+    // which will then seek to pendingStartPosition)
     if startPosition > 0 {
       lastStablePosition = startPosition
       sendEvent(withName: "playback-progress", body: [
@@ -337,6 +337,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   @objc
   func reset(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
     stopPositionTimer()
+    seekDebounceWorkItem?.cancel()
+    seekDebounceWorkItem = nil
     player?.stop()
     player = nil
     desiredIsPlaying = false
@@ -359,31 +361,64 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     resolve(nil)
   }
 
-  @objc
-  func seekTo(_ position: NSNumber, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
-    guard let player = player else {
-      resolve(nil)
-      return
-    }
+  /// Core seek implementation shared by seekTo() and remote jump handlers.
+  /// Handles seek coalescing and debouncing: rapid seeks are coalesced and the actual VLC seek
+  /// is debounced to prevent crashes from rapid time changes.
+  private func performSeek(to targetSeconds: Double) {
+    guard player != nil else { return }
 
-    let targetSeconds = max(0, position.doubleValue)
-    seekTargetPosition = targetSeconds
+    let clampedTarget = max(0, targetSeconds)
+    let wasAlreadySeeking = isSeeking
+
+    seekTargetPosition = clampedTarget
     isSeeking = true
 
-    // Emit seek-started event
-    sendEvent(withName: "seek-started", body: ["targetPosition": targetSeconds])
-
-    let millis = Int32(targetSeconds * 1000)
-    player.time = VLCTime(int: millis)
+    // Only emit seek-started for new seeks, not coalesced updates
+    if !wasAlreadySeeking {
+      sendEvent(withName: "seek-started", body: ["targetPosition": clampedTarget])
+    }
 
     // Immediately emit target position for responsive UI
     sendEvent(withName: "playback-progress", body: [
-      "position": targetSeconds,
+      "position": clampedTarget,
       "duration": safeDuration(),
       "seeking": true
     ])
 
     updateNowPlayingProgress()
+
+    // Debounce the actual VLC seek to prevent crashes from rapid seeks
+    seekDebounceWorkItem?.cancel()
+
+    let workItem = DispatchWorkItem { [weak self] in
+      guard let self = self, let player = self.player else { return }
+      let millis = Int32(self.seekTargetPosition * 1000)
+      player.time = VLCTime(int: millis)
+    }
+    seekDebounceWorkItem = workItem
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: workItem)
+  }
+
+  @objc
+  func seekTo(_ position: NSNumber, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+    performSeek(to: position.doubleValue)
+    resolve(nil)
+  }
+
+  @objc
+  func jumpForward(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+    let current = effectivePosition()
+    let duration = safeDuration()
+    let target = duration > 0 ? min(current + forwardInterval, duration) : current + forwardInterval
+    performSeek(to: target)
+    resolve(nil)
+  }
+
+  @objc
+  func jumpBackward(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+    let current = effectivePosition()
+    let target = max(0, current - backwardInterval)
+    performSeek(to: target)
     resolve(nil)
   }
 
@@ -611,38 +646,50 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   }
 
   private func handleRemoteJumpForward() {
-    // Skip seeking disabled - emit event only for JS to handle later
-    let current = currentPosition()
+    let current = effectivePosition()
+    let duration = safeDuration()
+    let target = duration > 0 ? min(current + forwardInterval, duration) : current + forwardInterval
+    performSeek(to: target)
     sendEvent(withName: "remote-jump-forward", body: ["interval": forwardInterval, "position": current])
   }
 
   private func handleRemoteJumpBackward() {
-    // Skip seeking disabled - emit event only for JS to handle later
-    let current = currentPosition()
+    let current = effectivePosition()
+    let target = max(0, current - backwardInterval)
+    performSeek(to: target)
     sendEvent(withName: "remote-jump-backward", body: ["interval": backwardInterval, "position": current])
   }
 
   private func handleRemoteNext() {
-    // Skip seeking disabled - emit event only for JS to handle later
-    let current = currentPosition()
+    let current = effectivePosition()
+    let duration = safeDuration()
+    let target = duration > 0 ? min(current + forwardInterval, duration) : current + forwardInterval
+    performSeek(to: target)
     sendEvent(withName: "remote-next", body: ["interval": forwardInterval, "position": current])
   }
 
   private func handleRemotePrevious() {
-    // Skip seeking disabled - emit event only for JS to handle later
-    let current = currentPosition()
+    let current = effectivePosition()
+    let target = max(0, current - backwardInterval)
+    performSeek(to: target)
     sendEvent(withName: "remote-previous", body: ["interval": backwardInterval, "position": current])
   }
 
   private func handleRemoteSeek(_ positionTime: TimeInterval) {
     let target = max(0, positionTime)
-    seekTo(NSNumber(value: target), resolver: { _ in }, rejecter: { _, _, _ in })
+    performSeek(to: target)
     sendEvent(withName: "remote-seek", body: ["position": target])
   }
 
   private func currentPosition() -> Double {
     guard let time = player?.time else { return 0 }
     return Double(time.intValue) / 1000.0
+  }
+
+  /// Returns seekTargetPosition if a seek is in progress, otherwise currentPosition().
+  /// Use this for jump calculations to support rapid consecutive jumps.
+  private func effectivePosition() -> Double {
+    return isSeeking ? seekTargetPosition : currentPosition()
   }
 
   private func currentDuration() -> Double {
