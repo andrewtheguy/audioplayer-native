@@ -151,8 +151,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         artist: urlToLoad,
       });
 
-      if (typeof position === "number" && Number.isFinite(position) && position > 0) {
-        await TrackPlayer.seekTo(position);
+      // Use pending start position first (from history load), then last known position, then current
+      const resumePos = pendingStartRef.current ?? lastProgressPosRef.current ?? position;
+      if (typeof resumePos === "number" && Number.isFinite(resumePos) && resumePos > 0) {
+        await TrackPlayer.seekTo(resumePos);
       }
     }, [playbackState.state, position]);
 
