@@ -243,6 +243,16 @@ export async function seekTo(position: number): Promise<void> {
   await NativeHlsPlayer.seekTo(position);
 }
 
+export async function jumpForward(): Promise<void> {
+  ensureIOS();
+  await NativeHlsPlayer.jumpForward();
+}
+
+export async function jumpBackward(): Promise<void> {
+  ensureIOS();
+  await NativeHlsPlayer.jumpBackward();
+}
+
 export async function getProgress(): Promise<Progress> {
   ensureIOS();
   const progress = await NativeHlsPlayer.getProgress();
@@ -377,6 +387,8 @@ const TrackPlayer = {
   stop,
   reset,
   seekTo,
+  jumpForward,
+  jumpBackward,
   getProgress,
   getPlaybackState,
   getActiveTrack,

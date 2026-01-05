@@ -390,10 +390,12 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       }
     };
 
-    // Skip button logic disabled for now - to be reimplemented later
-    const seekBy = async (_deltaSeconds: number) => {
-      // No-op - skip functionality disabled
-      return;
+    const handleJumpBackward = async () => {
+      await TrackPlayer.jumpBackward();
+    };
+
+    const handleJumpForward = async () => {
+      await TrackPlayer.jumpForward();
     };
 
     // Reset auto-save timer when playback stops
@@ -732,7 +734,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           <View style={[styles.row, styles.rowCentered]}>
             <Pressable
               style={[styles.secondaryButton, controlsDisabled && styles.buttonDisabled]}
-              onPress={() => void seekBy(-15)}
+              onPress={() => void handleJumpBackward()}
               disabled={controlsDisabled}
             >
               <Text style={styles.secondaryButtonText}>-15s</Text>
@@ -750,7 +752,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             </Pressable>
             <Pressable
               style={[styles.secondaryButton, controlsDisabled && styles.buttonDisabled]}
-              onPress={() => void seekBy(30)}
+              onPress={() => void handleJumpForward()}
               disabled={controlsDisabled}
             >
               <Text style={styles.secondaryButtonText}>+30s</Text>

@@ -359,31 +359,56 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     resolve(nil)
   }
 
-  @objc
-  func seekTo(_ position: NSNumber, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
-    guard let player = player else {
-      resolve(nil)
-      return
-    }
+  /// Core seek implementation shared by seekTo() and remote jump handlers.
+  /// Handles seek coalescing: if a seek is already in progress, updates the target position
+  /// without emitting redundant seek-started events to avoid race conditions.
+  private func performSeek(to targetSeconds: Double) {
+    guard let player = player else { return }
 
-    let targetSeconds = max(0, position.doubleValue)
-    seekTargetPosition = targetSeconds
+    let clampedTarget = max(0, targetSeconds)
+    let wasAlreadySeeking = isSeeking
+
+    seekTargetPosition = clampedTarget
     isSeeking = true
 
-    // Emit seek-started event
-    sendEvent(withName: "seek-started", body: ["targetPosition": targetSeconds])
+    // Only emit seek-started for new seeks, not coalesced updates
+    if !wasAlreadySeeking {
+      sendEvent(withName: "seek-started", body: ["targetPosition": clampedTarget])
+    }
 
-    let millis = Int32(targetSeconds * 1000)
+    let millis = Int32(clampedTarget * 1000)
     player.time = VLCTime(int: millis)
 
     // Immediately emit target position for responsive UI
     sendEvent(withName: "playback-progress", body: [
-      "position": targetSeconds,
+      "position": clampedTarget,
       "duration": safeDuration(),
       "seeking": true
     ])
 
     updateNowPlayingProgress()
+  }
+
+  @objc
+  func seekTo(_ position: NSNumber, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+    performSeek(to: position.doubleValue)
+    resolve(nil)
+  }
+
+  @objc
+  func jumpForward(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+    let current = currentPosition()
+    let duration = safeDuration()
+    let target = duration > 0 ? min(current + forwardInterval, duration) : current + forwardInterval
+    performSeek(to: target)
+    resolve(nil)
+  }
+
+  @objc
+  func jumpBackward(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+    let current = currentPosition()
+    let target = max(0, current - backwardInterval)
+    performSeek(to: target)
     resolve(nil)
   }
 
@@ -611,32 +636,38 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   }
 
   private func handleRemoteJumpForward() {
-    // Skip seeking disabled - emit event only for JS to handle later
     let current = currentPosition()
+    let duration = safeDuration()
+    let target = duration > 0 ? min(current + forwardInterval, duration) : current + forwardInterval
+    performSeek(to: target)
     sendEvent(withName: "remote-jump-forward", body: ["interval": forwardInterval, "position": current])
   }
 
   private func handleRemoteJumpBackward() {
-    // Skip seeking disabled - emit event only for JS to handle later
     let current = currentPosition()
+    let target = max(0, current - backwardInterval)
+    performSeek(to: target)
     sendEvent(withName: "remote-jump-backward", body: ["interval": backwardInterval, "position": current])
   }
 
   private func handleRemoteNext() {
-    // Skip seeking disabled - emit event only for JS to handle later
     let current = currentPosition()
+    let duration = safeDuration()
+    let target = duration > 0 ? min(current + forwardInterval, duration) : current + forwardInterval
+    performSeek(to: target)
     sendEvent(withName: "remote-next", body: ["interval": forwardInterval, "position": current])
   }
 
   private func handleRemotePrevious() {
-    // Skip seeking disabled - emit event only for JS to handle later
     let current = currentPosition()
+    let target = max(0, current - backwardInterval)
+    performSeek(to: target)
     sendEvent(withName: "remote-previous", body: ["interval": backwardInterval, "position": current])
   }
 
   private func handleRemoteSeek(_ positionTime: TimeInterval) {
     let target = max(0, positionTime)
-    seekTo(NSNumber(value: target), resolver: { _ in }, rejecter: { _, _, _ in })
+    performSeek(to: target)
     sendEvent(withName: "remote-seek", body: ["position": target])
   }
 
