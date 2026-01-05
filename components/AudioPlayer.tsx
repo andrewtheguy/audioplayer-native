@@ -311,20 +311,32 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     );
 
     const loadFromHistory = useCallback(
-      (entry: HistoryEntry, options?: { allowViewOnly?: boolean }) => {
+      (entry: HistoryEntry, options?: { allowViewOnly?: boolean; autoPlay?: boolean }) => {
         if (!entry) return;
         if (isViewOnly && !options?.allowViewOnly) return;
 
         if (isViewOnly) {
           applyHistoryDisplay(entry);
+          setViewOnlyPosition(Number.isFinite(entry.position) ? Math.max(0, entry.position) : 0);
           return;
         }
+
         const start = Number.isFinite(entry.position) ? Math.max(0, entry.position) : 0;
 
-        void loadUrl(entry.url, entry.title, {
-          skipInitialSave: true,
-          startPosition: start,
-        });
+        void (async () => {
+          await loadUrl(entry.url, entry.title, {
+            skipInitialSave: true,
+            startPosition: start,
+          });
+
+          if (options?.autoPlay) {
+            try {
+              await TrackPlayer.play();
+            } catch {
+              // ignore autoplay failures
+            }
+          }
+        })();
       },
       [applyHistoryDisplay, isViewOnly, loadUrl]
     );
@@ -813,7 +825,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
                 <View key={entry.url} style={styles.historyItem}>
                   <Pressable
                     style={styles.historyContent}
-                    onPress={() => loadFromHistory(entry)}
+                    onPress={() => loadFromHistory(entry, { autoPlay: true })}
                     disabled={isViewOnly}
                   >
                     <Text style={styles.historyTitle}>{entry.title || "Untitled"}</Text>
