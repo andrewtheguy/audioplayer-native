@@ -724,10 +724,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             <Text style={styles.nowPlayingTitle}>Nothing loaded</Text>
           )}
           <View style={styles.seekRow}>
-            {isLiveStream ? <View style={styles.seekPlaceholder} /> : (
+            {loading || isLiveStream ? <View style={styles.seekPlaceholder} /> : (
               <Text style={styles.meta}>{formatTime(displayPositionLabel)}</Text>
             )}
-            <Text style={styles.meta}>{isLiveStream ? "Live" : formatTime(displayDuration)}</Text>
+            <Text style={styles.meta}>{loading ? "--:--" : isLiveStream ? "Live" : formatTime(displayDuration)}</Text>
           </View>
 
           {/* Seek Slider */}
