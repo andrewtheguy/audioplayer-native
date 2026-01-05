@@ -189,35 +189,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       }
     }, []);
 
-    const seekWithRetry = useCallback(
-      async (targetSeconds: number) => {
-        if (!Number.isFinite(targetSeconds) || targetSeconds < 0) return;
-        const target = Math.max(0, targetSeconds);
-
-        const attemptSeek = async () => {
-          try {
-            await TrackPlayer.seekTo(target);
-          } catch {
-            /* noop */
-          }
-        };
-
-        await attemptSeek();
-
-        const maxAttempts = 3;
-        for (let i = 0; i < maxAttempts; i += 1) {
-          await new Promise((resolve) => setTimeout(resolve, 200));
-          const progress = await TrackPlayer.getProgress().catch(() => null);
-          const currentPos = Number(progress?.position ?? 0);
-          if (Math.abs(currentPos - target) < 0.5) {
-            return;
-          }
-          await attemptSeek();
-        }
-      },
-      []
-    );
-
     useEffect(() => {
       const target = pendingStartRef.current;
       if (!target || target <= 0) return;
@@ -227,9 +198,13 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
       pendingStartRef.current = null;
       void (async () => {
-        await seekWithRetry(target);
+        try {
+          await TrackPlayer.seekTo(target);
+        } catch {
+          // ignore seek failures
+        }
       })();
-    }, [playbackState.state, seekWithRetry]);
+    }, [playbackState.state]);
 
     // Stop and clear the player when session becomes inactive to avoid background audio
     useEffect(() => {
@@ -357,7 +332,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           setLoading(false);
         }
       },
-      [saveHistoryEntry, seekWithRetry]
+      [saveHistoryEntry]
     );
 
     const applyHistoryDisplay = useCallback(
