@@ -19,6 +19,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   private var seekTargetPosition: Double = 0
   private var lastStablePosition: Double = 0
   private var positionTimer: Timer?
+  private var seekDebounceWorkItem: DispatchWorkItem?
 
   // Pending start position and autoplay (set during load, executed when stream ready)
   private var pendingStartPosition: Double? = nil
@@ -43,6 +44,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
   deinit {
     stopPositionTimer()
+    seekDebounceWorkItem?.cancel()
     NotificationCenter.default.removeObserver(self)
   }
 
@@ -335,6 +337,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   @objc
   func reset(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
     stopPositionTimer()
+    seekDebounceWorkItem?.cancel()
+    seekDebounceWorkItem = nil
     player?.stop()
     player = nil
     desiredIsPlaying = false
@@ -358,10 +362,10 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   }
 
   /// Core seek implementation shared by seekTo() and remote jump handlers.
-  /// Handles seek coalescing: if a seek is already in progress, updates the target position
-  /// without emitting redundant seek-started events to avoid race conditions.
+  /// Handles seek coalescing and debouncing: rapid seeks are coalesced and the actual VLC seek
+  /// is debounced to prevent crashes from rapid time changes.
   private func performSeek(to targetSeconds: Double) {
-    guard let player = player else { return }
+    guard player != nil else { return }
 
     let clampedTarget = max(0, targetSeconds)
     let wasAlreadySeeking = isSeeking
@@ -374,9 +378,6 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
       sendEvent(withName: "seek-started", body: ["targetPosition": clampedTarget])
     }
 
-    let millis = Int32(clampedTarget * 1000)
-    player.time = VLCTime(int: millis)
-
     // Immediately emit target position for responsive UI
     sendEvent(withName: "playback-progress", body: [
       "position": clampedTarget,
@@ -385,6 +386,17 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     ])
 
     updateNowPlayingProgress()
+
+    // Debounce the actual VLC seek to prevent crashes from rapid seeks
+    seekDebounceWorkItem?.cancel()
+
+    let workItem = DispatchWorkItem { [weak self] in
+      guard let self = self, let player = self.player else { return }
+      let millis = Int32(self.seekTargetPosition * 1000)
+      player.time = VLCTime(int: millis)
+    }
+    seekDebounceWorkItem = workItem
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: workItem)
   }
 
   @objc
@@ -395,7 +407,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
   @objc
   func jumpForward(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
-    let current = currentPosition()
+    let current = effectivePosition()
     let duration = safeDuration()
     let target = duration > 0 ? min(current + forwardInterval, duration) : current + forwardInterval
     performSeek(to: target)
@@ -404,7 +416,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
   @objc
   func jumpBackward(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
-    let current = currentPosition()
+    let current = effectivePosition()
     let target = max(0, current - backwardInterval)
     performSeek(to: target)
     resolve(nil)
@@ -634,7 +646,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   }
 
   private func handleRemoteJumpForward() {
-    let current = currentPosition()
+    let current = effectivePosition()
     let duration = safeDuration()
     let target = duration > 0 ? min(current + forwardInterval, duration) : current + forwardInterval
     performSeek(to: target)
@@ -642,14 +654,14 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   }
 
   private func handleRemoteJumpBackward() {
-    let current = currentPosition()
+    let current = effectivePosition()
     let target = max(0, current - backwardInterval)
     performSeek(to: target)
     sendEvent(withName: "remote-jump-backward", body: ["interval": backwardInterval, "position": current])
   }
 
   private func handleRemoteNext() {
-    let current = currentPosition()
+    let current = effectivePosition()
     let duration = safeDuration()
     let target = duration > 0 ? min(current + forwardInterval, duration) : current + forwardInterval
     performSeek(to: target)
@@ -657,7 +669,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   }
 
   private func handleRemotePrevious() {
-    let current = currentPosition()
+    let current = effectivePosition()
     let target = max(0, current - backwardInterval)
     performSeek(to: target)
     sendEvent(withName: "remote-previous", body: ["interval": backwardInterval, "position": current])
@@ -672,6 +684,12 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   private func currentPosition() -> Double {
     guard let time = player?.time else { return 0 }
     return Double(time.intValue) / 1000.0
+  }
+
+  /// Returns seekTargetPosition if a seek is in progress, otherwise currentPosition().
+  /// Use this for jump calculations to support rapid consecutive jumps.
+  private func effectivePosition() -> Double {
+    return isSeeking ? seekTargetPosition : currentPosition()
   }
 
   private func currentDuration() -> Double {
