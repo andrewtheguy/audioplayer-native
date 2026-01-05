@@ -48,6 +48,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   private var preloadTargetPosition: Double = 0
 
   deinit {
+    positionTimer?.invalidate()
+    positionTimer = nil
     NotificationCenter.default.removeObserver(self)
   }
 
