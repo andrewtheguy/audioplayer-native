@@ -1,4 +1,4 @@
-import TrackPlayer, { Event } from "react-native-track-player";
+import * as TrackPlayer from "./HlsTrackPlayer";
 
 const DEFAULT_FORWARD_INTERVAL = 30;
 const DEFAULT_BACKWARD_INTERVAL = 15;
@@ -10,36 +10,44 @@ let cleanupListeners: (() => void) | null = null;
 
 // TrackPlayer expects a service handler that returns Promise<void>
 export async function PlaybackService(): Promise<void> {
+  await TrackPlayer.updateOptions({
+    forwardJumpInterval: DEFAULT_FORWARD_INTERVAL,
+    backwardJumpInterval: DEFAULT_BACKWARD_INTERVAL,
+  });
+
   // Prevent duplicate listeners when the service is invoked multiple times.
   if (cleanupListeners) {
     cleanupListeners();
   }
 
   const subscriptions = [
-    TrackPlayer.addEventListener(Event.RemotePlay, () => TrackPlayer.play()),
-    TrackPlayer.addEventListener(Event.RemotePause, () => TrackPlayer.pause()),
-    TrackPlayer.addEventListener(Event.RemoteStop, () => TrackPlayer.stop()),
-    TrackPlayer.addEventListener(Event.RemoteSeek, (event) => {
-      TrackPlayer.seekTo(event.position);
+    TrackPlayer.addEventListener("remote-play", () => TrackPlayer.play()),
+    TrackPlayer.addEventListener("remote-pause", () => TrackPlayer.pause()),
+    TrackPlayer.addEventListener("remote-stop", () => TrackPlayer.stop()),
+    TrackPlayer.addEventListener("remote-seek", (event) => {
+      if (!event) return;
+      TrackPlayer.seekTo(event.position ?? 0);
     }),
-    TrackPlayer.addEventListener(Event.RemoteJumpForward, async (event) => {
+    TrackPlayer.addEventListener("remote-jump-forward", async (event) => {
       try {
         const position = await TrackPlayer.getProgress().then((p) => p.position);
-        await TrackPlayer.seekTo(position + (event.interval || DEFAULT_FORWARD_INTERVAL));
+        const interval = event?.interval ?? DEFAULT_FORWARD_INTERVAL;
+        await TrackPlayer.seekTo(position + interval);
       } catch (error) {
         console.error("Remote jump forward failed:", error);
       }
     }),
-    TrackPlayer.addEventListener(Event.RemoteJumpBackward, async (event) => {
+    TrackPlayer.addEventListener("remote-jump-backward", async (event) => {
       try {
         const position = await TrackPlayer.getProgress().then((p) => p.position);
-        await TrackPlayer.seekTo(Math.max(0, position - (event.interval || DEFAULT_BACKWARD_INTERVAL)));
+        const interval = event?.interval ?? DEFAULT_BACKWARD_INTERVAL;
+        await TrackPlayer.seekTo(Math.max(0, position - interval));
       } catch (error) {
         console.error("Remote jump backward failed:", error);
       }
     }),
     // Intentionally map hardware next/previous to fixed time skips since this app is single-track.
-    TrackPlayer.addEventListener(Event.RemoteNext, async () => {
+    TrackPlayer.addEventListener("remote-next", async () => {
       try {
         const position = await TrackPlayer.getProgress().then((p) => p.position);
         await TrackPlayer.seekTo(position + DEFAULT_FORWARD_INTERVAL);
@@ -47,7 +55,7 @@ export async function PlaybackService(): Promise<void> {
         console.error("Remote next failed:", error);
       }
     }),
-    TrackPlayer.addEventListener(Event.RemotePrevious, async () => {
+    TrackPlayer.addEventListener("remote-previous", async () => {
       try {
         const position = await TrackPlayer.getProgress().then((p) => p.position);
         await TrackPlayer.seekTo(Math.max(0, position - DEFAULT_BACKWARD_INTERVAL));
@@ -55,8 +63,10 @@ export async function PlaybackService(): Promise<void> {
         console.error("Remote previous failed:", error);
       }
     }),
-    TrackPlayer.addEventListener(Event.PlaybackError, (event) => {
-      console.error("Playback error:", event.message);
+    TrackPlayer.addEventListener("playback-error", (event) => {
+      if (!event) return;
+      const message = typeof event.message === "string" ? event.message : "Unknown error";
+      console.error("Playback error:", message);
     }),
   ];
 

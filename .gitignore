@@ -38,8 +38,22 @@ yarn-error.*
 
 app-example
 
-# generated native folders
-/ios
+# unneeded generated native folders
 /android
 
 .idea/
+
+# iOS build artifacts
+ios/build/
+ios/Pods/
+ios/Podfile.lock
+
+# Xcode user-specific files
+ios/*.xcworkspace/xcuserdata/
+ios/*.xcodeproj/xcuserdata/
+
+# iOS
+**/ios/.xcode.env.local
+
+# CocoaPods
+ios/.symlinks/

@@ -3,6 +3,8 @@ import type { SessionStatus } from "@/hooks/useNostrSession";
 import { useNostrSession } from "@/hooks/useNostrSession";
 import type { HistoryEntry } from "@/lib/history";
 import { getHistory, saveHistory } from "@/lib/history";
+import * as TrackPlayer from "@/services/HlsTrackPlayer";
+import { State, usePlaybackIntent, usePlaybackState, useProgress } from "@/services/HlsTrackPlayer";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import Slider from "@react-native-community/slider";
 import {
@@ -24,15 +26,10 @@ import {
   TextInput,
   View,
 } from "react-native";
-import TrackPlayer, {
-  State,
-  usePlaybackState,
-  useProgress,
-} from "react-native-track-player";
 
 export interface AudioPlayerHandle {
-  startSession: () => void;
-  takeOverSession: () => void;
+  enterPublishMode: () => void;
+  enterViewMode: () => void;
   refreshSession: () => void;
   syncNow: () => void;
   getSessionStatus: () => SessionStatus;
@@ -63,7 +60,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const [nowPlayingTitle, setNowPlayingTitle] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
-    const [volume, setVolume] = useState(1);
     const [showUrlInput, setShowUrlInput] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [editingTitleValue, setEditingTitleValue] = useState("");
@@ -77,12 +73,25 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const lastProgressPosRef = useRef(0);
     const [nowTick, setNowTick] = useState(Date.now());
     const [viewOnlyPosition, setViewOnlyPosition] = useState<number | null>(null);
+    const [isLiveStream, setIsLiveStream] = useState(false);
+    const [probeDuration, setProbeDuration] = useState<number>(0);
 
     // TrackPlayer hooks for real-time updates
-    const { position, duration } = useProgress(200);
+    const { position, duration: vlcDuration } = useProgress(200);
     const playbackState = usePlaybackState();
-    const isPlaying = playbackState.state === State.Playing;
-    const isLiveStream = !duration || duration === 0 || !Number.isFinite(duration);
+    const playbackIntent = usePlaybackIntent();
+    const hasActiveTrack = Boolean(nowPlayingUrl);
+    // Use VLC duration if available, otherwise fall back to probe duration
+    const duration = vlcDuration > 0 ? vlcDuration : probeDuration;
+    const hasFiniteDuration = Number.isFinite(duration) && duration > 0;
+    const effectivePlaybackState = playbackState.state;
+    const isPlayingNative = effectivePlaybackState === State.Playing;
+    const isBuffering = effectivePlaybackState === State.Buffering;
+    const isIntentPlaying = playbackIntent.playing;
+    const isPlaying = isPlayingNative;
+    const effectiveStateLabel = State[effectivePlaybackState] ?? "Unknown";
+    const nativeStateLabel = State[playbackState.state] ?? "Unknown";
+    const intentStateLabel = isIntentPlaying ? "Playing" : "Paused";
 
     const currentUrlRef = useRef<string | null>(null);
     const currentTitleRef = useRef<string | null>(null);
@@ -101,9 +110,14 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       isLiveStreamRef.current = isLiveStream;
     }, [isLiveStream]);
 
+
     useImperativeHandle(ref, () => ({
-      startSession: () => syncRef.current?.startSession(),
-      takeOverSession: () => syncRef.current?.takeOverSession(),
+      enterPublishMode: () => syncRef.current?.startSession(),
+      enterViewMode: () => {
+        session.setSessionStatus("idle");
+        session.clearSessionNotice();
+        syncRef.current?.enterViewMode();
+      },
       refreshSession: () => syncRef.current?.refreshSession(),
       syncNow: () => syncRef.current?.syncNow(),
       getSessionStatus: () => session.sessionStatus,
@@ -137,16 +151,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       }
     }, []);
 
-    const applyVolume = useCallback(async (nextVolume: number) => {
-      const clamped = Math.min(1, Math.max(0, nextVolume));
-      setVolume(clamped);
-      try {
-        await TrackPlayer.setVolume(clamped);
-      } catch {
-        // Ignore volume failures
-      }
-    }, []);
-
     // Stop and clear the player when session becomes inactive to avoid background audio
     useEffect(() => {
       if (session.sessionStatus === "active") return;
@@ -154,6 +158,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         try {
           await TrackPlayer.stop();
           await TrackPlayer.reset();
+          setIsLiveStream(false);
+          isLiveStreamRef.current = false;
+          setProbeDuration(0);
         } catch {
           // Ignore cleanup failures
         }
@@ -217,6 +224,13 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         setError(null);
 
         try {
+          const probe = await TrackPlayer.probe(urlToLoad);
+          const live = Boolean(probe?.isLive);
+          const probeStreamDuration = Number(probe?.duration ?? 0);
+          setIsLiveStream(live);
+          isLiveStreamRef.current = live;
+          setProbeDuration(probeStreamDuration > 0 ? probeStreamDuration : 0);
+
           // Reset the player and add the new track
           await TrackPlayer.reset();
 
@@ -231,9 +245,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           currentTitleRef.current = resolvedTitle ?? null;
           setNowPlayingUrl(urlToLoad);
           setNowPlayingTitle(resolvedTitle ?? null);
-
-          // Apply current volume
-          await TrackPlayer.setVolume(volume);
 
           // Seek to start position if provided
           const startPosition = options?.startPosition ?? null;
@@ -250,7 +261,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           setLoading(false);
         }
       },
-      [saveHistoryEntry, volume]
+      [saveHistoryEntry]
     );
 
     const applyHistoryDisplay = useCallback(
@@ -331,7 +342,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     const togglePlayPause = async () => {
       if (isViewOnly) return;
-      if (isPlaying) {
+      if (isIntentPlaying) {
         await handlePause();
       } else {
         await handlePlay();
@@ -339,7 +350,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     };
 
     const seekBy = async (deltaSeconds: number) => {
-      if (isViewOnly || isLiveStreamRef.current) return;
+      if (isViewOnly || isLiveStreamRef.current || !currentUrlRef.current) return;
       const next = Math.max(0, position + deltaSeconds);
       setPendingSeekPosition(next);
       lastSeekAtRef.current = Date.now();
@@ -378,10 +389,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
       const currentTrack = await TrackPlayer.getActiveTrack();
       if (currentUrlRef.current && currentUrlRef.current === entry.url && currentTrack) {
-        if (!isLiveStreamRef.current && Number.isFinite(entry.position)) {
-          const target = Math.max(0, entry.position);
-          await TrackPlayer.seekTo(target);
-        }
+        // Same track already playing - don't seek to remote position
+        // Our current playback position is more accurate than the stale remote sync
         return;
       }
 
@@ -526,12 +535,14 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     ]);
 
     // Display position (scrub, then pending seek preview/optimistic, then live position)
-    const displayPosition = optimisticPosition;
+    const displayPosition = hasActiveTrack ? optimisticPosition : 0;
+    const displayDuration = hasActiveTrack && hasFiniteDuration ? duration : null;
+    const displayPositionLabel = hasActiveTrack ? displayPosition : null;
 
     if (isViewOnly) {
       const isLiveDisplay = false;
       const viewOnlyDisplayPos = displayPosition;
-      const viewOnlyDuration = duration && Number.isFinite(duration) ? duration : null;
+      const viewOnlyDuration = displayDuration;
       return (
         <View style={styles.container}>
           <Text style={styles.heading}>Audio Player</Text>
@@ -574,7 +585,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               void saveHistory(merged);
             }}
             onRemoteSync={handleRemoteSync}
-            onTakeOver={handleRemoteSync}
           />
         </View>
       );
@@ -686,27 +696,33 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               <Text style={styles.nowPlayingUrl} numberOfLines={1}>
                 {nowPlayingUrl}
               </Text>
+              <Text style={styles.debugMeta}>Intent: {intentStateLabel}</Text>
+              <Text style={styles.debugMeta}>Native: {nativeStateLabel}</Text>
+              <Text style={styles.debugMeta}>Effective: {effectiveStateLabel}</Text>
+              <Text style={styles.debugMeta}>Duration: VLC={vlcDuration.toFixed(1)} Probe={probeDuration.toFixed(1)}</Text>
+              {isBuffering ? <Text style={styles.debugMeta}>Buffering</Text> : null}
+              {isLiveStream ? <Text style={styles.debugMeta}>Live stream</Text> : null}
             </>
           ) : (
             <Text style={styles.nowPlayingTitle}>Nothing loaded</Text>
           )}
           <View style={styles.seekRow}>
             {isLiveStream ? <View style={styles.seekPlaceholder} /> : (
-              <Text style={styles.meta}>{formatTime(displayPosition)}</Text>
+              <Text style={styles.meta}>{formatTime(displayPositionLabel)}</Text>
             )}
-            <Text style={styles.meta}>{isLiveStream ? "Live" : formatTime(duration)}</Text>
+            <Text style={styles.meta}>{isLiveStream ? "Live" : formatTime(displayDuration)}</Text>
           </View>
 
           {/* Seek Slider */}
           <Slider
             style={styles.slider}
             minimumValue={0}
-            maximumValue={duration || 1}
-            value={displayPosition}
+            maximumValue={hasFiniteDuration ? duration : 1}
+            value={hasActiveTrack && hasFiniteDuration ? displayPosition : 0}
             onSlidingStart={handleSeekStart}
             onValueChange={handleSeekChange}
             onSlidingComplete={handleSeekComplete}
-            disabled={isViewOnly || isLiveStream || !duration}
+            disabled={isViewOnly || isLiveStream || !hasActiveTrack || !hasFiniteDuration}
             minimumTrackTintColor="#60A5FA"
             maximumTrackTintColor="#374151"
             thumbTintColor="#93C5FD"
@@ -726,7 +742,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               disabled={isViewOnly}
             >
               <MaterialIcons
-                name={isPlaying ? "pause" : "play-arrow"}
+                name={isIntentPlaying ? "pause" : "play-arrow"}
                 size={26}
                 color="#F9FAFB"
               />
@@ -740,23 +756,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             </Pressable>
           </View>
 
-          <View style={styles.volumeRow}>
-            <Text style={styles.meta}>Volume</Text>
-            <Text style={styles.meta}>{Math.round(volume * 100)}%</Text>
-          </View>
-
-          {/* Volume Slider */}
-          <Slider
-            style={styles.slider}
-            minimumValue={0}
-            maximumValue={1}
-            value={volume}
-            onValueChange={(value) => void applyVolume(value)}
-            disabled={isViewOnly}
-            minimumTrackTintColor="#60A5FA"
-            maximumTrackTintColor="#374151"
-            thumbTintColor="#93C5FD"
-          />
         </View>
 
         <View style={styles.card}>
@@ -807,7 +806,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             void saveHistory(merged);
           }}
           onRemoteSync={handleRemoteSync}
-          onTakeOver={handleRemoteSync}
         />
       </View>
     );
@@ -893,12 +891,6 @@ const styles = StyleSheet.create({
     width: "100%",
     height: 40,
   },
-  volumeRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 16,
-  },
   nowPlaying: {
     color: "#F9FAFB",
     fontSize: 16,
@@ -923,6 +915,11 @@ const styles = StyleSheet.create({
   meta: {
     color: "#9CA3AF",
     marginTop: 6,
+  },
+  debugMeta: {
+    color: "#9CA3AF",
+    marginTop: 4,
+    fontSize: 12,
   },
   error: {
     color: "#FCA5A5",

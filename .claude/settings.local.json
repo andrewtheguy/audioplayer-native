@@ -3,7 +3,13 @@
     "allow": [
       "Bash(npm uninstall:*)",
       "Bash(expo:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(git -C /Users/it3/codes/andrew/audioplayer-native log --oneline)",
+      "Bash(git -C /Users/it3/codes/andrew/audioplayer-native show:*)",
+      "Bash(cat:*)",
+      "mcp__github__get_file_contents",
+      "mcp__github__search_code"
     ]
   }
 }
