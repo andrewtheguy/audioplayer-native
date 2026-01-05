@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { NativeEventEmitter, NativeModules, Platform } from "react-native";
 
 const LINKING_ERROR =
@@ -83,7 +83,15 @@ export type HlsPlayerEvent =
   | "playback-error"
   | "playback-state"
   | "playback-progress"
-  | "playback-intent";
+  | "playback-intent"
+  | "stream-ready"
+  | "seek-started"
+  | "seek-completed";
+
+export type AddOptions = {
+  startPosition?: number;
+  autoplay?: boolean;
+};
 
 type EventListener = (payload?: any) => void;
 
@@ -183,16 +191,21 @@ export async function setupPlayer(_options?: {
   await NativeHlsPlayer.initialize();
 }
 
-export async function add(track: Track): Promise<void> {
+export async function add(track: Track, options?: AddOptions): Promise<void> {
   ensureIOS();
   activeTrack = track;
-  await NativeHlsPlayer.load(track.url, track.title ?? track.url, null);
+  await NativeHlsPlayer.load(
+    track.url,
+    track.title ?? track.url,
+    options?.startPosition ?? null,
+    options?.autoplay ?? false
+  );
   await NativeHlsPlayer.setNowPlaying({
     title: track.title ?? "Stream",
     artist: track.artist ?? "",
     url: track.url,
   });
-  emitPlaybackState(State.Ready);
+  // Don't emit Ready immediately - native will emit stream-ready when actually ready
 }
 
 export async function play(): Promise<void> {
@@ -280,24 +293,14 @@ export function usePlaybackState(): PlaybackState {
 
 export function useProgress(updateInterval: number = 250): Progress {
   const [progress, setProgress] = useState<Progress>({ position: 0, duration: 0, buffered: 0, seeking: false });
-  const lastPositionRef = useRef(0);
 
   useEffect(() => {
     const sub = emitter.addListener("playback-progress", (payload?: Progress) => {
-      const newPosition = Number(payload?.position ?? 0);
-      const isSeeking = Boolean(payload?.seeking);
-
-      // Native handles filtering now, but add a safety check for backward jumps
-      if (!isSeeking && newPosition < lastPositionRef.current - 1.0 && newPosition > 0 && lastPositionRef.current > 0) {
-        return; // Skip unexpected backward jump
-      }
-
-      lastPositionRef.current = newPosition;
       setProgress({
-        position: newPosition,
+        position: Number(payload?.position ?? 0),
         duration: Number(payload?.duration ?? 0),
         buffered: Number(payload?.buffered ?? 0),
-        seeking: isSeeking,
+        seeking: Boolean(payload?.seeking),
       });
     });
 
@@ -320,6 +323,41 @@ export function usePlaybackIntent(): PlaybackIntent {
   }, []);
 
   return intent;
+}
+
+export function useStreamReady(): boolean {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const readySub = emitter.addListener("stream-ready", () => setReady(true));
+    // Reset when playback state becomes none or stopped
+    const stateSub = emitter.addListener("playback-state", (payload?: { state?: string }) => {
+      if (payload?.state === "none" || payload?.state === "stopped") {
+        setReady(false);
+      }
+    });
+    return () => {
+      readySub.remove();
+      stateSub.remove();
+    };
+  }, []);
+
+  return ready;
+}
+
+export function useSeeking(): boolean {
+  const [seeking, setSeeking] = useState(false);
+
+  useEffect(() => {
+    const startSub = emitter.addListener("seek-started", () => setSeeking(true));
+    const endSub = emitter.addListener("seek-completed", () => setSeeking(false));
+    return () => {
+      startSub.remove();
+      endSub.remove();
+    };
+  }, []);
+
+  return seeking;
 }
 
 const TrackPlayer = {

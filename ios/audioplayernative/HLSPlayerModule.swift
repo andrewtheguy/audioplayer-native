@@ -17,9 +17,13 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   // Seek state tracking
   private var isSeeking = false
   private var seekTargetPosition: Double = 0
-  private var seekStartTime: Date?
   private var lastStablePosition: Double = 0
   private var positionTimer: Timer?
+
+  // Pending start position and autoplay (set during load, executed when stream ready)
+  private var pendingStartPosition: Double? = nil
+  private var pendingAutoplay: Bool = false
+  private var hasEmittedStreamReady = false
 
   deinit {
     NotificationCenter.default.removeObserver(self)
@@ -43,6 +47,9 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
       "playback-state",
       "playback-progress",
       "playback-intent",
+      "stream-ready",
+      "seek-started",
+      "seek-completed",
     ]
   }
 
@@ -68,7 +75,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   }
 
   @objc
-  func load(_ urlString: String, title: String?, startPosition: NSNumber?, resolver: RCTPromiseResolveBlock, rejecter: RCTPromiseRejectBlock) {
+  func load(_ urlString: String, title: String?, startPosition: NSNumber?, autoplay: Bool, resolver: RCTPromiseResolveBlock, rejecter: RCTPromiseRejectBlock) {
     guard let url = URL(string: urlString) else {
       rejecter("invalid_url", "Invalid URL", nil)
       return
@@ -80,9 +87,14 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     mediaPlayer.delegate = self
     mediaPlayer.media = VLCMedia(url: url)
 
+    // Store pending start position and autoplay - will be executed when stream is ready
     if let start = startPosition?.doubleValue, start > 0 {
-      mediaPlayer.media?.addOption(":start-time=\(start)")
+      pendingStartPosition = start
+    } else {
+      pendingStartPosition = nil
     }
+    pendingAutoplay = autoplay
+    hasEmittedStreamReady = false
 
     player = mediaPlayer
     hasValidDuration = false
@@ -160,6 +172,9 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     isSeeking = false
     seekTargetPosition = 0
     lastStablePosition = 0
+    pendingStartPosition = nil
+    pendingAutoplay = false
+    hasEmittedStreamReady = false
     nowPlayingInfo = [:]
     nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
     MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
@@ -179,7 +194,9 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
     let targetSeconds = max(0, position.doubleValue)
     seekTargetPosition = targetSeconds
     isSeeking = true
-    seekStartTime = Date()
+
+    // Emit seek-started event
+    sendEvent(withName: "seek-started", body: ["targetPosition": targetSeconds])
 
     let millis = Int32(targetSeconds * 1000)
     player.time = VLCTime(int: millis)
@@ -410,30 +427,26 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
   }
 
   private func handleRemoteJumpForward() {
+    // Skip seeking disabled - emit event only for JS to handle later
     let current = currentPosition()
-    let target = current + forwardInterval
-    seekTo(NSNumber(value: target), resolver: { _ in }, rejecter: { _, _, _ in })
     sendEvent(withName: "remote-jump-forward", body: ["interval": forwardInterval, "position": current])
   }
 
   private func handleRemoteJumpBackward() {
+    // Skip seeking disabled - emit event only for JS to handle later
     let current = currentPosition()
-    let target = max(0, current - backwardInterval)
-    seekTo(NSNumber(value: target), resolver: { _ in }, rejecter: { _, _, _ in })
     sendEvent(withName: "remote-jump-backward", body: ["interval": backwardInterval, "position": current])
   }
 
   private func handleRemoteNext() {
+    // Skip seeking disabled - emit event only for JS to handle later
     let current = currentPosition()
-    let target = current + forwardInterval
-    seekTo(NSNumber(value: target), resolver: { _ in }, rejecter: { _, _, _ in })
     sendEvent(withName: "remote-next", body: ["interval": forwardInterval, "position": current])
   }
 
   private func handleRemotePrevious() {
+    // Skip seeking disabled - emit event only for JS to handle later
     let current = currentPosition()
-    let target = max(0, current - backwardInterval)
-    seekTo(NSNumber(value: target), resolver: { _ in }, rejecter: { _, _, _ in })
     sendEvent(withName: "remote-previous", body: ["interval": backwardInterval, "position": current])
   }
 
@@ -582,31 +595,69 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate {
       nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
     }
 
-    // During seeking: only accept position once stabilized near target
-    if isSeeking {
-      let tolerance: Double = 2.0  // HLS keyframe tolerance
-      let isNearTarget = abs(rawPosition - seekTargetPosition) < tolerance
-      let seekAge = Date().timeIntervalSince(seekStartTime ?? Date())
+    // Emit stream-ready once we have a valid position (stream is loaded and ready)
+    if !hasEmittedStreamReady && rawPosition >= 0 {
+      hasEmittedStreamReady = true
+      sendEvent(withName: "stream-ready", body: [
+        "position": rawPosition,
+        "duration": duration
+      ])
 
-      if isNearTarget || seekAge > 3.0 {
-        // Seek complete
-        isSeeking = false
-        lastStablePosition = rawPosition
-      } else {
-        // Still seeking - emit target position, not erratic VLC position
+      // Handle pending start position
+      if let startPos = pendingStartPosition, startPos > 0 {
+        pendingStartPosition = nil
+        seekTargetPosition = startPos
+        isSeeking = true
+        sendEvent(withName: "seek-started", body: ["targetPosition": startPos])
+        let millis = Int32(startPos * 1000)
+        player?.time = VLCTime(int: millis)
         sendEvent(withName: "playback-progress", body: [
-          "position": seekTargetPosition,
+          "position": startPos,
           "duration": duration,
           "seeking": true
         ])
         return
       }
+
+      // Handle pending autoplay (if no start position to seek to)
+      if pendingAutoplay {
+        pendingAutoplay = false
+        desiredIsPlaying = true
+        sendPlaybackIntent(true)
+        player?.play()
+        updateNowPlayingState(isPlaying: true)
+        sendPlaybackState("playing")
+      }
+      return
     }
 
-    // Filter backwards jumps during playback (not paused/stopped)
-    if !isSeeking && player?.isPlaying == true && lastStablePosition > 0 {
-      if rawPosition < lastStablePosition - 2.0 && rawPosition > 0 {
-        // Unexpected backward jump - ignore
+    // During seeking: check if position stabilized near target
+    if isSeeking {
+      let tolerance: Double = 0.5
+      let isNearTarget = abs(rawPosition - seekTargetPosition) < tolerance
+
+      if isNearTarget {
+        // Seek complete
+        isSeeking = false
+        lastStablePosition = rawPosition
+        sendEvent(withName: "seek-completed", body: ["position": rawPosition])
+
+        // Handle pending autoplay after seek completes
+        if pendingAutoplay {
+          pendingAutoplay = false
+          desiredIsPlaying = true
+          sendPlaybackIntent(true)
+          player?.play()
+          updateNowPlayingState(isPlaying: true)
+          sendPlaybackState("playing")
+        }
+      } else {
+        // Still seeking - emit target position for stable UI
+        sendEvent(withName: "playback-progress", body: [
+          "position": seekTargetPosition,
+          "duration": duration,
+          "seeking": true
+        ])
         return
       }
     }

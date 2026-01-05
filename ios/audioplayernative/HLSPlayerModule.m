@@ -8,6 +8,7 @@ RCT_EXTERN_METHOD(configure:(NSDictionary *)options)
 RCT_EXTERN_METHOD(load:(NSString *)urlString
                   title:(NSString *)title
           startPosition:(NSNumber *)startPosition
+               autoplay:(BOOL)autoplay
                 resolver:(RCTPromiseResolveBlock)resolver
                 rejecter:(RCTPromiseRejectBlock)rejecter)
 RCT_EXTERN_METHOD(play:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)rejecter)
