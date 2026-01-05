@@ -283,7 +283,7 @@ export function usePlaybackState(): PlaybackState {
   return state;
 }
 
-export function useProgress(updateInterval: number = 250): Progress {
+export function useProgress(): Progress {
   const [progress, setProgress] = useState<Progress>({ position: 0, duration: 0, buffered: 0, seeking: false });
 
   useEffect(() => {
@@ -299,7 +299,7 @@ export function useProgress(updateInterval: number = 250): Progress {
     return () => {
       sub.remove();
     };
-  }, [updateInterval]);
+  }, []);
 
   return progress;
 }

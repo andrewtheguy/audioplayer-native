@@ -37,19 +37,12 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   private var probeStartPosition: Double? = nil
   private var probeAutoplay: Bool = false
 
-  // Seek retry tracking
-  private var seekRetryCount: Int = 0
-  private var maxSeekRetries: Int = 3
-  private var seekTimeoutCounter: Int = 0
-  private var maxSeekTimeoutTicks: Int = 20  // ~5 seconds at 250ms intervals
-
   // Preload state (silent play-pause to position stream without autoplay)
   private var isPreloading: Bool = false
   private var preloadTargetPosition: Double = 0
 
   deinit {
-    positionTimer?.invalidate()
-    positionTimer = nil
+    stopPositionTimer()
     NotificationCenter.default.removeObserver(self)
   }
 
@@ -311,6 +304,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
   @objc
   func stop(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+    stopPositionTimer()
     if let player = player {
       player.stop()
       player.time = VLCTime(int: 0)
@@ -331,6 +325,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
   @objc
   func reset(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
+    stopPositionTimer()
     player?.stop()
     player = nil
     desiredIsPlaying = false
