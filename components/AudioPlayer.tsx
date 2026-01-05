@@ -111,7 +111,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     useEffect(() => {
       if (playbackState.state !== State.Stopped) return;
-      setScrubPosition(0);
+      // Don't reset position when stopped - let it stay at the end like web player
       setIsScrubbing(false);
     }, [playbackState.state]);
 
@@ -137,12 +137,16 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       const titleToLoad = active?.title ?? currentTitleRef.current ?? undefined;
 
       await TrackPlayer.reset();
-      await TrackPlayer.add({
-        id: urlToLoad,
-        url: urlToLoad,
-        title: titleToLoad || "Stream",
-        artist: urlToLoad,
-      });
+      // Start from beginning when rehydrating after stop (like web player)
+      await TrackPlayer.add(
+        {
+          id: urlToLoad,
+          url: urlToLoad,
+          title: titleToLoad || "Stream",
+          artist: urlToLoad,
+        },
+        { startPosition: 0, autoplay: false }
+      );
     }, [playbackState.state]);
 
     const handlePlay = useCallback(async () => {
@@ -513,8 +517,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     };
 
     // Display position - trust native position directly, use scrub position during slider interaction
+    // When stopped, keep showing the last position (like web player shows position at end)
     const computedDisplayPosition = useMemo(() => {
-      if (playbackState.state === State.Stopped) return 0;
       if (isScrubbing) return scrubPosition;
       if (isViewOnly) return viewOnlyPosition ?? position;
       return position;
@@ -524,7 +528,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       position,
       scrubPosition,
       viewOnlyPosition,
-      playbackState.state,
     ]);
 
     const displayPosition = hasActiveTrack ? computedDisplayPosition : 0;
