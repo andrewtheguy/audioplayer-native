@@ -512,8 +512,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
       reportedPosition = currentPos
     }
     let effectiveDuration = probedDuration > 0 ? probedDuration : duration
-    // Treat stream as live if we probed it as live, even if a sliding-window duration later appears.
-    let effectiveIsLive = probedIsLive || effectiveDuration <= 0 || !effectiveDuration.isFinite
+    // Trust probedIsLive from AVURLAsset - VLC may report duration for live streams
+    let effectiveIsLive = probedIsLive || (effectiveDuration <= 0 || !effectiveDuration.isFinite)
 
     sendEvent(withName: "stream-ready", body: [
       "position": reportedPosition,
@@ -740,6 +740,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   }
 
   private func isLiveStream() -> Bool {
+    // Trust probedIsLive from AVURLAsset - VLC may report duration for live streams
     if probedIsLive { return true }
     if hasValidDuration { return false }
     let duration = safeDuration()
@@ -865,11 +866,11 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     let rawPosition = safePosition()
     let duration = safeDuration()
 
-    // Once we get a valid duration, update Now Playing to non-live mode
-    // and emit stream-info event to update isLive status
+    // Once we get a valid duration, update Now Playing
+    // Trust probedIsLive - VLC may report duration for live streams
     if !hasValidDuration && duration > 0 {
       if probedIsLive {
-        // Live HLS streams may expose a sliding-window duration; keep live semantics intact.
+        // Live stream with sliding-window duration - keep live semantics
         sendEvent(withName: "stream-info", body: [
           "duration": duration,
           "isLive": true
