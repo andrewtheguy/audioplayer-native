@@ -24,6 +24,7 @@ interface NostrSyncPanelProps {
   encryptionKeys: NostrKeys | null;
   history: HistoryEntry[];
   session: NostrSessionApi;
+  npub: string | null;
   onHistoryLoaded: (merged: HistoryEntry[]) => void;
   onRemoteSync?: (remoteHistory: HistoryEntry[]) => void;
 }
@@ -51,7 +52,7 @@ function StatusBadge({ status }: { status: SessionStatus }) {
 }
 
 export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelProps>(
-  ({ encryptionKeys, history, session, onHistoryLoaded, onRemoteSync }, ref) => {
+  ({ encryptionKeys, history, session, npub, onHistoryLoaded, onRemoteSync }, ref) => {
     const [showDetails, setShowDetails] = useState(false);
 
     const hasKeys = encryptionKeys !== null;
@@ -205,6 +206,14 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
 
         {showDetails && (
           <View style={styles.detailsContainer}>
+            {npub && (
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>npub</Text>
+                <Text style={styles.detailValueMono} numberOfLines={1}>
+                  {npub.slice(0, 12)}...{npub.slice(-8)}
+                </Text>
+              </View>
+            )}
             <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Relays</Text>
               <Text style={styles.detailValue}>{RELAYS.length} connected</Text>

@@ -637,6 +637,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             encryptionKeys={session.encryptionKeys}
             history={history}
             session={session}
+            npub={session.npub}
             onHistoryLoaded={(merged) => {
               setHistory(merged);
               void saveHistory(merged);
@@ -892,6 +893,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           encryptionKeys={session.encryptionKeys}
           history={history}
           session={session}
+          npub={session.npub}
           onHistoryLoaded={(merged) => {
             setHistory(merged);
             void saveHistory(merged);
