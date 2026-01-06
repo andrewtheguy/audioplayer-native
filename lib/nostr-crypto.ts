@@ -385,7 +385,7 @@ function isValidHistoryEntry(value: unknown): value is HistoryEntry {
     (typeof entry.gain === "number" &&
       Number.isFinite(entry.gain) &&
       entry.gain >= 0 &&
-      entry.gain <= 1);
+      entry.gain <= 2);
   return (
     typeof entry.url === "string" &&
     (entry.title === undefined || typeof entry.title === "string") &&
