@@ -57,3 +57,6 @@ ios/*.xcodeproj/xcuserdata/
 
 # CocoaPods
 ios/.symlinks/
+
+# Local development team config
+ios/DevelopmentTeam.xcconfig

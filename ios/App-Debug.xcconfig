@@ -1,0 +1,3 @@
+// App Debug configuration
+#include "Pods/Target Support Files/Pods-audioplayernative/Pods-audioplayernative.debug.xcconfig"
+#include? "DevelopmentTeam.xcconfig"

@@ -1,0 +1,4 @@
+// Local development team configuration
+// Copy this file to DevelopmentTeam.xcconfig and set your team ID
+// Find your team ID in Xcode: Project → Signing & Capabilities → Team
+DEVELOPMENT_TEAM = YOUR_TEAM_ID_HERE

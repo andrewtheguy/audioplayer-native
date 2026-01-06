@@ -1,0 +1,3 @@
+// App Release configuration
+#include "Pods/Target Support Files/Pods-audioplayernative/Pods-audioplayernative.release.xcconfig"
+#include? "DevelopmentTeam.xcconfig"

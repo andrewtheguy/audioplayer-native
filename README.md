@@ -21,6 +21,21 @@ This native iOS app follows the architecture outlined in [audioplayer/docs/archi
 npm install
 ```
 
+## iOS Setup
+Before building for iOS, configure your development team:
+
+```bash
+cd ios
+cp DevelopmentTeam.xcconfig.example DevelopmentTeam.xcconfig
+```
+
+Edit `ios/DevelopmentTeam.xcconfig` and set your Apple Development Team ID:
+```
+DEVELOPMENT_TEAM = YOUR_TEAM_ID_HERE
+```
+
+Find your Team ID in Xcode: Project → Signing & Capabilities → Team.
+
 ## Run on iOS
 ```bash
 npm run ios
