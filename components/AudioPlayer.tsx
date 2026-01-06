@@ -73,7 +73,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const [probeDuration, setProbeDuration] = useState<number>(0);
 
     // TrackPlayer hooks for real-time updates
-    const { position, duration: vlcDuration, seeking: isSeeking } = useProgress(200);
+    const { position, duration: vlcDuration } = useProgress();
     const playbackState = usePlaybackState();
     const playbackIntent = usePlaybackIntent();
     const streamInfo = useStreamReady();
