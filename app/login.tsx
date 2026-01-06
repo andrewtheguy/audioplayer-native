@@ -24,15 +24,16 @@ import {
   View,
 } from "react-native";
 
-type LoginStep = "npub" | "secret" | "loading" | "error";
+type LoginState = "form" | "loading" | "error";
 
 export default function LoginScreen() {
   const router = useRouter();
-  const [step, setStep] = useState<LoginStep>("npub");
+  const [state, setState] = useState<LoginState>("form");
   const [npub, setNpub] = useState("");
   const [secret, setSecret] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [pubkeyHex, setPubkeyHex] = useState<string | null>(null);
+  const [npubError, setNpubError] = useState<string | null>(null);
+  const [secretError, setSecretError] = useState<string | null>(null);
+  const [generalError, setGeneralError] = useState<string | null>(null);
 
   // Check for saved npub on mount
   useEffect(() => {
@@ -44,8 +45,6 @@ export default function LoginScreen() {
           const hex = parseNpub(savedNpub);
           if (hex) {
             setNpub(savedNpub);
-            setPubkeyHex(hex);
-            setStep("secret");
           }
         }
       } catch (err) {
@@ -57,63 +56,111 @@ export default function LoginScreen() {
     };
   }, []);
 
-  const handleSubmitNpub = async () => {
+  const validateNpub = (value: string): string | null => {
+    const trimmed = value.trim();
+    if (!trimmed) return null; // Empty is not an error until submit
+    if (!trimmed.startsWith("npub1")) {
+      return "Must start with 'npub1'";
+    }
+    if (!parseNpub(trimmed)) {
+      return "Invalid npub format";
+    }
+    return null;
+  };
+
+  const validateSecret = (value: string): string | null => {
+    const trimmed = value.trim();
+    if (!trimmed) return null; // Empty is not an error until submit
+    if (!isValidSecondarySecret(trimmed)) {
+      return "Must be 16 characters and a valid secret format";
+    }
+    return null;
+  };
+
+  const handleNpubChange = (value: string) => {
+    setNpub(value);
+    setNpubError(validateNpub(value));
+    setGeneralError(null);
+  };
+
+  const handleSecretChange = (value: string) => {
+    setSecret(value);
+    setSecretError(validateSecret(value));
+    setGeneralError(null);
+  };
+
+  const handleNpubBlur = () => {
     const trimmed = npub.trim();
-    if (!trimmed) {
-      setError("Enter your npub first.");
-      return;
-    }
-
-    const hex = parseNpub(trimmed);
-    if (!hex) {
-      setError("Invalid npub format. It should start with 'npub1'.");
-      return;
-    }
-
-    try {
-      await saveNpub(trimmed);
-      setPubkeyHex(hex);
-      setStep("secret");
-      setError(null);
-    } catch (err) {
-      console.error("Failed to save npub:", err);
-      setError("Failed to save npub. Please try again.");
+    if (trimmed !== npub) setNpub(trimmed);
+    if (trimmed) {
+      setNpubError(validateNpub(trimmed));
     }
   };
 
-  const handleSubmitSecret = async () => {
+  const handleSecretBlur = () => {
     const trimmed = secret.trim();
-    if (!trimmed) {
-      setError("Enter your secondary secret first.");
-      return;
+    if (trimmed !== secret) setSecret(trimmed);
+    if (trimmed) {
+      setSecretError(validateSecret(trimmed));
+    }
+  };
+
+  const handleSubmit = async () => {
+    const trimmedNpub = npub.trim();
+    const trimmedSecret = secret.trim();
+
+    // Validate both fields
+    let hasError = false;
+
+    if (!trimmedNpub) {
+      setNpubError("Required");
+      hasError = true;
+    } else {
+      const npubValidation = validateNpub(trimmedNpub);
+      if (npubValidation) {
+        setNpubError(npubValidation);
+        hasError = true;
+      }
     }
 
-    if (!isValidSecondarySecret(trimmed)) {
-      setError("Invalid secondary secret format. Check for typos.");
-      return;
+    if (!trimmedSecret) {
+      setSecretError("Required");
+      hasError = true;
+    } else {
+      const secretValidation = validateSecret(trimmedSecret);
+      if (secretValidation) {
+        setSecretError(secretValidation);
+        hasError = true;
+      }
     }
 
+    if (hasError) return;
+
+    const pubkeyHex = parseNpub(trimmedNpub);
     if (!pubkeyHex) {
-      setError("Missing npub. Please go back and enter it.");
+      setNpubError("Invalid npub format");
       return;
     }
 
-    setStep("loading");
-    setError(null);
+    setState("loading");
+    setGeneralError(null);
 
     try {
+      // Save npub first
+      await saveNpub(trimmedNpub);
+
       // Try to load player ID from relay
-      const playerId = await loadPlayerIdFromNostr(pubkeyHex, trimmed);
+      const playerId = await loadPlayerIdFromNostr(pubkeyHex, trimmedSecret);
 
       if (!playerId) {
-        setStep("error");
-        setError("No player ID found. Please set up your identity on the web app first.");
+        setState("error");
+        setGeneralError("No player ID found. Please set up your identity on the web app first.");
         return;
       }
 
       if (!isValidPlayerId(playerId)) {
-        setStep("error");
-        setError("Invalid player ID format. The data may be corrupted.");
+        setState("error");
+        setGeneralError("Invalid player ID format. The data may be corrupted.");
         return;
       }
 
@@ -121,173 +168,107 @@ export default function LoginScreen() {
       await deriveEncryptionKey(playerId);
 
       // Save the secret and navigate to player
-      await setSecondarySecret(trimmed);
+      await setSecondarySecret(trimmedSecret);
       router.replace("/player");
     } catch (err) {
       if (err instanceof PlayerIdDecryptionError) {
-        setStep("secret");
-        setError("Wrong secondary secret. Please check and try again.");
+        setState("form");
+        setSecretError("Wrong secret - decryption failed");
         return;
       }
-      setStep("error");
-      setError(
-        `Network error: ${err instanceof Error ? err.message : "Unknown error"}. Please try again.`
+      setState("error");
+      setGeneralError(
+        `Network error: ${err instanceof Error ? err.message : "Unknown error"}`
       );
     }
   };
 
-  const handleBack = () => {
-    setStep("npub");
-    setSecret("");
-    setError(null);
-    setPubkeyHex(null);
-  };
-
   const handleRetry = () => {
-    setStep("secret");
-    setError(null);
+    setState("form");
+    setGeneralError(null);
   };
 
-  if (step === "loading") {
+  if (state === "loading") {
     return (
       <View style={styles.container}>
         <ActivityIndicator size="large" color="#60A5FA" />
-        <Text style={styles.loadingText}>Loading player ID from relay...</Text>
+        <Text style={styles.loadingText}>Connecting to relay...</Text>
       </View>
     );
   }
 
-  if (step === "error") {
+  if (state === "error") {
     return (
       <View style={styles.container}>
         <Text style={styles.title}>Error</Text>
-        <Text style={styles.error}>{error}</Text>
-        <View style={styles.buttonRow}>
-          <Pressable style={styles.secondaryButton} onPress={handleBack}>
-            <Text style={styles.secondaryButtonText}>Change npub</Text>
-          </Pressable>
-          <Pressable style={styles.primaryButton} onPress={handleRetry}>
-            <Text style={styles.primaryButtonText}>Try Again</Text>
-          </Pressable>
-        </View>
+        <Text style={styles.error}>{generalError}</Text>
+        <Pressable style={styles.primaryButton} onPress={handleRetry}>
+          <Text style={styles.primaryButtonText}>Try Again</Text>
+        </Pressable>
       </View>
     );
   }
 
-  if (step === "secret") {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.title}>Enter Secondary Secret</Text>
-        <Text style={styles.subtitle}>
-          Enter the 16-character secondary secret from your web app to decrypt your player ID.
-        </Text>
+  const canSubmit = npub.trim() && secret.trim() && !npubError && !secretError;
 
-        <View style={styles.npubBadge}>
-          <Text style={styles.npubBadgeLabel}>npub:</Text>
-          <Text style={styles.npubBadgeValue} numberOfLines={1} ellipsizeMode="middle">
-            {npub}
-          </Text>
-        </View>
-
-        <View style={styles.inputRow}>
-          <TextInput
-            style={[styles.input, secret ? styles.inputWithButton : null]}
-            value={secret}
-            onChangeText={(value) => {
-              setSecret(value);
-              if (error) setError(null);
-            }}
-            onBlur={() => {
-              const trimmed = secret.trim();
-              if (trimmed !== secret) setSecret(trimmed);
-            }}
-            autoCapitalize="none"
-            autoCorrect={false}
-            autoComplete="off"
-            placeholder="e.g. OR8QqY-v_4XA64vx"
-            placeholderTextColor="#6B7280"
-          />
-          {secret ? (
-            <Pressable
-              style={styles.clearButton}
-              onPress={() => {
-                setSecret("");
-                setError(null);
-              }}
-              accessibilityLabel="Clear secret input"
-            >
-              <Text style={styles.clearButtonText}>Clear</Text>
-            </Pressable>
-          ) : null}
-        </View>
-
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-
-        <Pressable style={styles.primaryButton} onPress={() => void handleSubmitSecret()}>
-          <Text style={styles.primaryButtonText}>Continue</Text>
-        </Pressable>
-
-        <Pressable style={styles.secondaryButton} onPress={handleBack}>
-          <Text style={styles.secondaryButtonText}>Use Different npub</Text>
-        </Pressable>
-
-        <Text style={styles.note}>
-          Get your secondary secret from the web app's settings page.
-        </Text>
-      </View>
-    );
-  }
-
-  // step === "npub"
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Enter npub</Text>
+      <Text style={styles.title}>Sign In</Text>
       <Text style={styles.subtitle}>
-        Enter your Nostr public key (npub) to sync your playback history.
+        Enter your Nostr credentials to sync your playback history.
       </Text>
 
-      <View style={styles.inputRow}>
-        <TextInput
-          style={[styles.input, npub ? styles.inputWithButton : null]}
-          value={npub}
-          onChangeText={(value) => {
-            setNpub(value);
-            if (error) setError(null);
-          }}
-          onBlur={() => {
-            const trimmed = npub.trim();
-            if (trimmed !== npub) setNpub(trimmed);
-          }}
-          autoCapitalize="none"
-          autoCorrect={false}
-          autoComplete="off"
-          placeholder="npub1..."
-          placeholderTextColor="#6B7280"
-          multiline
-          numberOfLines={2}
-        />
-        {npub ? (
-          <Pressable
-            style={styles.clearButton}
-            onPress={() => {
-              setNpub("");
-              setError(null);
-            }}
-            accessibilityLabel="Clear npub input"
-          >
-            <Text style={styles.clearButtonText}>Clear</Text>
-          </Pressable>
-        ) : null}
-      </View>
+      <Text style={styles.label}>npub</Text>
+      <TextInput
+        style={[styles.input, npubError && styles.inputError]}
+        value={npub}
+        onChangeText={handleNpubChange}
+        onBlur={handleNpubBlur}
+        autoCapitalize="none"
+        autoCorrect={false}
+        autoComplete="off"
+        placeholder="npub1..."
+        placeholderTextColor="#6B7280"
+        multiline
+        numberOfLines={2}
+      />
+      {npubError ? (
+        <Text style={styles.fieldError}>{npubError}</Text>
+      ) : (
+        <Text style={styles.fieldHint}>Your Nostr public key from the web app</Text>
+      )}
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      <Text style={styles.label}>Secondary Secret</Text>
+      <TextInput
+        style={[styles.input, secretError && styles.inputError]}
+        value={secret}
+        onChangeText={handleSecretChange}
+        onBlur={handleSecretBlur}
+        autoCapitalize="none"
+        autoCorrect={false}
+        autoComplete="off"
+        placeholder="16-character secret"
+        placeholderTextColor="#6B7280"
+        secureTextEntry
+      />
+      {secretError ? (
+        <Text style={styles.fieldError}>{secretError}</Text>
+      ) : (
+        <Text style={styles.fieldHint}>From the web app settings page</Text>
+      )}
 
-      <Pressable style={styles.primaryButton} onPress={() => void handleSubmitNpub()}>
-        <Text style={styles.primaryButtonText}>Continue</Text>
+      {generalError ? <Text style={styles.error}>{generalError}</Text> : null}
+
+      <Pressable
+        style={[styles.primaryButton, !canSubmit && styles.buttonDisabled]}
+        onPress={() => void handleSubmit()}
+        disabled={!canSubmit}
+      >
+        <Text style={styles.primaryButtonText}>Sign In</Text>
       </Pressable>
 
       <Text style={styles.note}>
-        Get your npub from the web app. If you don't have one, create an identity on the web first.
+        Create your identity on the web app first if you do not have one.
       </Text>
     </View>
   );
@@ -308,93 +289,68 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     color: "#9CA3AF",
-    marginBottom: 16,
+    marginBottom: 24,
     lineHeight: 22,
   },
-  npubBadge: {
-    flexDirection: "row",
-    backgroundColor: "#1F2937",
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 16,
-    alignItems: "center",
-  },
-  npubBadgeLabel: {
-    color: "#9CA3AF",
+  label: {
+    color: "#E5E7EB",
     fontWeight: "600",
-    marginRight: 8,
-  },
-  npubBadgeValue: {
-    color: "#60A5FA",
-    flex: 1,
-    fontFamily: "monospace",
-  },
-  inputRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    marginBottom: 12,
+    marginBottom: 6,
+    marginTop: 12,
   },
   input: {
     backgroundColor: "#111827",
     borderRadius: 10,
     padding: 12,
     color: "#F9FAFB",
-    flex: 1,
     fontFamily: "monospace",
+    borderWidth: 1,
+    borderColor: "#374151",
   },
-  inputWithButton: {
-    marginRight: 8,
+  inputError: {
+    borderColor: "#EF4444",
+  },
+  fieldError: {
+    color: "#FCA5A5",
+    fontSize: 12,
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  fieldHint: {
+    color: "#6B7280",
+    fontSize: 12,
+    marginTop: 4,
+    marginBottom: 4,
   },
   primaryButton: {
     backgroundColor: "#2563EB",
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderRadius: 10,
     alignItems: "center",
-    marginTop: 4,
+    marginTop: 24,
   },
   primaryButtonText: {
     color: "#F9FAFB",
     fontWeight: "600",
+    fontSize: 16,
   },
-  secondaryButton: {
-    backgroundColor: "#1F2937",
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: "center",
-    marginTop: 12,
-  },
-  secondaryButtonText: {
-    color: "#E5E7EB",
-    fontWeight: "600",
-  },
-  clearButton: {
-    backgroundColor: "#1F2937",
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-  },
-  clearButtonText: {
-    color: "#F9FAFB",
-    fontWeight: "600",
+  buttonDisabled: {
+    opacity: 0.5,
   },
   error: {
     color: "#FCA5A5",
-    marginBottom: 8,
+    marginTop: 12,
   },
   note: {
     color: "#6B7280",
-    marginTop: 16,
+    marginTop: 20,
     fontSize: 12,
     lineHeight: 18,
+    textAlign: "center",
   },
   loadingText: {
     color: "#9CA3AF",
     marginTop: 16,
     textAlign: "center",
-  },
-  buttonRow: {
-    flexDirection: "row",
-    gap: 12,
-    marginTop: 16,
   },
 });
