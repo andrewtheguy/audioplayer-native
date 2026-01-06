@@ -97,6 +97,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const currentTitleRef = useRef<string | null>(null);
     const lastAutoSaveAtRef = useRef(0);
     const isLiveStreamRef = useRef(false);
+    const volumeRef = useRef(100);
 
     const session = useNostrSession({
       onSessionStatusChange,
@@ -113,6 +114,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     useEffect(() => {
       isLiveStreamRef.current = isLiveStream;
     }, [isLiveStream]);
+
+    useEffect(() => {
+      volumeRef.current = volume;
+    }, [volume]);
 
     // Update isLiveStream and probeDuration from VLC stream-ready event
     useEffect(() => {
@@ -232,14 +237,16 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
         const pos = Number.isFinite(positionToSave) ? (positionToSave as number) : position;
         const now = new Date().toISOString();
-        const entry: HistoryEntry = {
-          url: currentUrlRef.current,
-          title: currentTitleRef.current ?? undefined,
-          lastPlayedAt: now,
-          position: pos,
-        };
 
         setHistory((prev) => {
+          const entry: HistoryEntry = {
+            url: currentUrlRef.current!,
+            title: currentTitleRef.current ?? undefined,
+            lastPlayedAt: now,
+            position: pos,
+            gain: volumeRef.current / 100,
+          };
+
           const existingIndex = prev.findIndex((item) => item.url === entry.url);
           let next: HistoryEntry[];
           if (existingIndex >= 0) {
@@ -334,6 +341,11 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         if (!entry) return;
         if (isViewOnly && !options?.allowViewOnly) return;
 
+        // Load saved gain value (convert gain 1.0-2.0 to volume 100-200)
+        const savedVolume = Math.round((entry.gain ?? 1) * 100);
+        setVolumeState(savedVolume);
+        void TrackPlayer.setVolume(savedVolume);
+
         if (isViewOnly) {
           applyHistoryDisplay(entry);
           setViewOnlyPosition(Number.isFinite(entry.position) ? Math.max(0, entry.position) : 0);
@@ -361,6 +373,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         setHistory(stored);
         if (stored[0]) {
           applyHistoryDisplay(stored[0]);
+          // Load saved gain value
+          const savedVolume = Math.round((stored[0].gain ?? 1) * 100);
+          setVolumeState(savedVolume);
         }
         if (session.sessionStatus !== "active" && stored[0]) {
           setViewOnlyPosition(
