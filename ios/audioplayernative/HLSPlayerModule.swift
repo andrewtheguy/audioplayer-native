@@ -832,6 +832,10 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   func mediaPlayerStateChanged(_ aNotification: Notification) {
     guard let state = player?.state else { return }
 
+    // VLCKit disables idle timer when playing video - re-enable it for audio-only playback
+    // This allows the device screen to sleep normally while audio continues in background
+    UIApplication.shared.isIdleTimerDisabled = false
+
     // When playback naturally ends or stops, update intent to not playing
     if state == .ended || state == .stopped {
       if desiredIsPlaying {
