@@ -759,7 +759,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
                 onPress={() => setShowDebugInfo(!showDebugInfo)}
               >
                 <Text style={styles.debugToggleCaret}>
-                  {showDebugInfo ? "v" : ">"}
+                  {showDebugInfo ? "▼" : "▶"}
                 </Text>
                 <Text style={styles.debugToggleText}>Debug Info</Text>
               </Pressable>
