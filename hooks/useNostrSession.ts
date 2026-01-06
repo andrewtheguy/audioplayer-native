@@ -1,3 +1,4 @@
+import { clearHistory } from "@/lib/history";
 import {
   clearAllIdentityData,
   clearSecondarySecret,
@@ -225,6 +226,9 @@ export function useNostrSession({
         setSessionNotice("Invalid npub format.");
         return false;
       }
+
+      // Clear leftover history from previous session before login
+      await clearHistory();
 
       // Save npub
       await saveNpub(trimmed);
