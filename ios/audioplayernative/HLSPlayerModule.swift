@@ -372,6 +372,9 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   private func performSeek(to targetSeconds: Double) {
     guard player != nil else { return }
 
+    // User's manual seek takes priority over pending start position from history
+    pendingStartPosition = nil
+
     let clampedTarget = max(0, targetSeconds)
     let wasAlreadySeeking = isSeeking
 
