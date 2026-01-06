@@ -1,39 +1,83 @@
 import { AudioPlayer, type AudioPlayerHandle } from "@/components/AudioPlayer";
 import type { SessionStatus } from "@/hooks/useNostrSession";
-import { clearSessionSecret, getSavedSessionSecret } from "@/lib/history";
+import {
+  clearAllIdentityData,
+  getSavedNpub,
+  getSecondarySecret,
+  getStorageScope,
+} from "@/lib/identity";
+import { parseNpub } from "@/lib/nostr-crypto";
 import * as TrackPlayer from "@/services/HlsTrackPlayer";
 import { Redirect, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+interface IdentityData {
+  npub: string;
+  pubkeyHex: string;
+  fingerprint: string;
+  secondarySecret: string;
+}
+
 export default function PlayerScreen() {
   const router = useRouter();
-  const [secret, setSecret] = useState<string | null>(null);
+  const [identity, setIdentity] = useState<IdentityData | null>(null);
   const [loading, setLoading] = useState(true);
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const playerRef = useRef<AudioPlayerHandle | null>(null);
-  const [sessionStatus, setSessionStatus] = useState<SessionStatus>("unknown");
+  const [sessionStatus, setSessionStatus] = useState<SessionStatus>("idle");
 
   useEffect(() => {
     let mounted = true;
     (async () => {
-      let stored: string | null = null;
       try {
-        stored = await getSavedSessionSecret();
+        const npub = await getSavedNpub();
+        if (!npub) {
+          if (mounted) {
+            setIdentity(null);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const pubkeyHex = parseNpub(npub);
+        if (!pubkeyHex) {
+          if (mounted) {
+            setIdentity(null);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const fingerprint = getStorageScope(pubkeyHex);
+        const secondarySecret = await getSecondarySecret(fingerprint);
+
+        if (!secondarySecret) {
+          if (mounted) {
+            setIdentity(null);
+            setLoading(false);
+          }
+          return;
+        }
+
+        if (mounted) {
+          setIdentity({ npub, pubkeyHex, fingerprint, secondarySecret });
+          setLoading(false);
+        }
       } catch (error) {
-        console.error("Failed to load session secret.", error);
-      } finally {
-        if (!mounted) return;
-        setSecret(stored || null);
-        setLoading(false);
+        console.error("Failed to load identity.", error);
+        if (mounted) {
+          setIdentity(null);
+          setLoading(false);
+        }
       }
     })();
     return () => {
@@ -52,16 +96,14 @@ export default function PlayerScreen() {
         // Ignore teardown failures on logout
       }
 
-      await clearSessionSecret();
+      await clearAllIdentityData(identity?.fingerprint ?? null);
       router.replace("/login");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error("Failed to clear session secret.", error);
-      setLogoutError(message || "Failed to clear session secret.");
+      console.error("Failed to clear identity data.", error);
+      setLogoutError(message || "Failed to clear identity data.");
     }
   };
-
-
 
   const handlePublishMode = () => playerRef.current?.enterPublishMode();
   const handleViewMode = () => playerRef.current?.enterViewMode();
@@ -78,7 +120,7 @@ export default function PlayerScreen() {
     );
   }
 
-  if (!secret) {
+  if (!identity) {
     return <Redirect href="/login" />;
   }
 
@@ -121,7 +163,10 @@ export default function PlayerScreen() {
         ) : null}
         <AudioPlayer
           ref={playerRef}
-          secret={secret}
+          npub={identity.npub}
+          pubkeyHex={identity.pubkeyHex}
+          fingerprint={identity.fingerprint}
+          secondarySecret={identity.secondarySecret}
           onSessionStatusChange={setSessionStatus}
         />
       </ScrollView>

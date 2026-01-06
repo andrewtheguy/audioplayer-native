@@ -36,7 +36,10 @@ export interface AudioPlayerHandle {
 }
 
 interface AudioPlayerProps {
-  secret: string;
+  npub: string;
+  pubkeyHex: string;
+  fingerprint: string;
+  secondarySecret: string;
   onSessionStatusChange?: (status: SessionStatus) => void;
 }
 
@@ -54,7 +57,7 @@ function formatTime(seconds: number | null): string {
 const SAVE_POSITION_INTERVAL_MS = 5000;
 
 export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
-  ({ secret, onSessionStatusChange }, ref) => {
+  ({ npub, pubkeyHex, fingerprint, secondarySecret, onSessionStatusChange }, ref) => {
     const [history, setHistory] = useState<HistoryEntry[]>([]);
     const [url, setUrl] = useState("");
     const [title, setTitle] = useState("");
@@ -99,7 +102,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const isLiveStreamRef = useRef(false);
 
     const session = useNostrSession({
-      secret,
       onSessionStatusChange,
     });
     const isViewOnly = session.sessionStatus !== "active";
@@ -624,7 +626,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
           <NostrSyncPanel
             ref={syncRef}
-            secret={secret}
+            encryptionKeys={session.encryptionKeys}
+            npub={npub}
+            fingerprint={fingerprint}
             history={history}
             session={session}
             onHistoryLoaded={(merged) => {
@@ -879,7 +883,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
         <NostrSyncPanel
           ref={syncRef}
-          secret={secret}
+          encryptionKeys={session.encryptionKeys}
+          npub={npub}
+          fingerprint={fingerprint}
           history={history}
           session={session}
           onHistoryLoaded={(merged) => {

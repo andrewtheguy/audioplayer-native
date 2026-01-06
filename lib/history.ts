@@ -2,7 +2,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export const STORAGE_KEY = "com.audioplayer.history.v1";
 export const HISTORY_TIMESTAMP_KEY = "com.audioplayer.history.timestamp";
-export const SESSION_SECRET_KEY = "com.audioplayer.session.secret";
 
 export const MAX_HISTORY_ENTRIES = 100;
 
@@ -97,30 +96,5 @@ export async function saveHistory(history: HistoryEntry[]): Promise<boolean> {
   } catch (err) {
     console.warn("Failed to save history to AsyncStorage:", err);
     return false;
-  }
-}
-
-export async function getSavedSessionSecret(): Promise<string> {
-  try {
-    return (await AsyncStorage.getItem(SESSION_SECRET_KEY)) ?? "";
-  } catch (err) {
-    console.warn("Failed to read session secret:", err);
-    return "";
-  }
-}
-
-export async function saveSessionSecret(secret: string): Promise<void> {
-  try {
-    await AsyncStorage.setItem(SESSION_SECRET_KEY, secret);
-  } catch (err) {
-    console.warn("Failed to save session secret:", err);
-  }
-}
-
-export async function clearSessionSecret(): Promise<void> {
-  try {
-    await AsyncStorage.removeItem(SESSION_SECRET_KEY);
-  } catch (err) {
-    console.warn("Failed to clear session secret:", err);
   }
 }
