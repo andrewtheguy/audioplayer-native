@@ -166,10 +166,7 @@ export default function PlayerScreen() {
           </View>
         ) : null}
         <AudioPlayer
-          npub={identity.npub}
-          pubkeyHex={identity.pubkeyHex}
           fingerprint={identity.fingerprint}
-          secondarySecret={identity.secondarySecret}
           onSessionStatusChange={setSessionStatus}
         />
       </ScrollView>

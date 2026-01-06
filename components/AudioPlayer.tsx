@@ -33,10 +33,7 @@ export interface AudioPlayerHandle {
 }
 
 interface AudioPlayerProps {
-  npub: string;
-  pubkeyHex: string;
   fingerprint: string;
-  secondarySecret: string;
   onSessionStatusChange?: (status: SessionStatus) => void;
 }
 
@@ -54,7 +51,7 @@ function formatTime(seconds: number | null): string {
 const SAVE_POSITION_INTERVAL_MS = 5000;
 
 export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
-  ({ npub, pubkeyHex, fingerprint, secondarySecret, onSessionStatusChange }, ref) => {
+  ({ fingerprint, onSessionStatusChange }, ref) => {
     const [history, setHistory] = useState<HistoryEntry[]>([]);
     const [url, setUrl] = useState("");
     const [title, setTitle] = useState("");
