@@ -81,12 +81,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     // Use VLC duration if available, otherwise fall back to probe duration
     const duration = vlcDuration > 0 ? vlcDuration : probeDuration;
     const hasFiniteDuration = Number.isFinite(duration) && duration > 0;
-    const effectivePlaybackState = playbackState.state;
-    const isPlayingNative = effectivePlaybackState === State.Playing;
-    const isBuffering = effectivePlaybackState === State.Buffering;
+    const isPlayingNative = playbackState.state === State.Playing;
+    const isBuffering = playbackState.state === State.Buffering;
     const isIntentPlaying = playbackIntent.playing;
     const isPlaying = isPlayingNative;
-    const effectiveStateLabel = State[effectivePlaybackState] ?? "Unknown";
     const nativeStateLabel = State[playbackState.state] ?? "Unknown";
     const intentStateLabel = isIntentPlaying ? "Playing" : "Paused";
 
@@ -105,7 +103,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     // Treat true loading separately from buffering - buffering is part of playback, not loading
     // Controls should be enabled during buffering (user can pause, seek, etc.)
     const isLoadingState = loading;
-    const isUnloaded = effectivePlaybackState === State.None;
+    const isUnloaded = playbackState.state === State.None;
     const controlsDisabled = isViewOnly || loading || isUnloaded;
 
     useEffect(() => {
@@ -726,7 +724,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               </Text>
               <Text style={styles.debugMeta}>Intent: {intentStateLabel}</Text>
               <Text style={styles.debugMeta}>Native: {nativeStateLabel}</Text>
-              <Text style={styles.debugMeta}>Effective: {effectiveStateLabel}</Text>
               <Text style={styles.debugMeta}>Duration: VLC={vlcDuration.toFixed(1)} Probe={probeDuration.toFixed(1)}</Text>
               {isBuffering ? <Text style={styles.debugMeta}>Buffering</Text> : null}
               {isLoadingState ? <Text style={styles.debugMeta}>Loading</Text> : null}
