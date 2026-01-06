@@ -478,7 +478,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         const entry = history[0];
         if (entry) {
           const start = Number.isFinite(entry.position) ? Math.max(0, entry.position) : 0;
-          void loadUrl(entry.url, entry.title, { skipInitialSave: true, startPosition: start });
+          const entryVolume = Math.max(100, Math.min(200, Math.round((entry.gain ?? 1) * 100)));
+          setVolumeState(entryVolume);
+          void loadUrl(entry.url, entry.title, { skipInitialSave: true, startPosition: start, volume: entryVolume });
         } else if (currentUrlRef.current) {
           void loadUrl(currentUrlRef.current, currentTitleRef.current ?? undefined, {
             skipInitialSave: true,
