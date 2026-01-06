@@ -758,11 +758,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
                 style={styles.debugToggle}
                 onPress={() => setShowDebugInfo(!showDebugInfo)}
               >
-                <MaterialIcons
-                  name={showDebugInfo ? "expand-less" : "expand-more"}
-                  size={16}
-                  color="#6B7280"
-                />
+                <Text style={styles.debugToggleCaret}>
+                  {showDebugInfo ? "v" : ">"}
+                </Text>
                 <Text style={styles.debugToggleText}>Debug Info</Text>
               </Pressable>
               {showDebugInfo && (
@@ -1040,6 +1038,10 @@ const styles = StyleSheet.create({
     color: "#6B7280",
     fontSize: 12,
     marginLeft: 4,
+  },
+  debugToggleCaret: {
+    color: "#6B7280",
+    fontSize: 12,
   },
   debugPanel: {
     marginTop: 4,
