@@ -72,6 +72,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const [isLiveStream, setIsLiveStream] = useState(false);
     const [probeDuration, setProbeDuration] = useState<number>(0);
 
+    // Volume/gain state (100 = normal, 200 = 2x amplification)
+    const [volume, setVolumeState] = useState(100);
+
     // TrackPlayer hooks for real-time updates
     const { position, duration: vlcDuration } = useProgress();
     const playbackState = usePlaybackState();
@@ -554,6 +557,13 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       setIsScrubbing(false);
     };
 
+    // Volume slider handler - snaps to increments of 10
+    const handleVolumeChange = async (value: number) => {
+      const snapped = Math.round(value / 10) * 10;
+      setVolumeState(snapped);
+      await TrackPlayer.setVolume(snapped);
+    };
+
     // Display position - trust native position directly, use scrub position during slider interaction
     // When stopped, keep showing the last position (like web player shows position at end)
     const computedDisplayPosition = useMemo(() => {
@@ -806,6 +816,24 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             </Pressable>
           </View>
 
+          {/* Volume/Gain Slider */}
+          <View style={styles.volumeRow}>
+            <MaterialIcons name="volume-up" size={20} color="#9CA3AF" />
+            <Slider
+              style={styles.volumeSlider}
+              minimumValue={100}
+              maximumValue={200}
+              step={10}
+              value={volume}
+              onSlidingComplete={handleVolumeChange}
+              disabled={controlsDisabled}
+              minimumTrackTintColor="#10B981"
+              maximumTrackTintColor="#374151"
+              thumbTintColor="#34D399"
+            />
+            <Text style={styles.volumeLabel}>{volume}%</Text>
+          </View>
+
         </View>
 
         <View style={styles.card}>
@@ -940,6 +968,22 @@ const styles = StyleSheet.create({
   slider: {
     width: "100%",
     height: 40,
+  },
+  volumeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 16,
+    gap: 8,
+  },
+  volumeSlider: {
+    flex: 1,
+    height: 40,
+  },
+  volumeLabel: {
+    color: "#9CA3AF",
+    fontSize: 14,
+    width: 45,
+    textAlign: "right",
   },
   nowPlaying: {
     color: "#F9FAFB",

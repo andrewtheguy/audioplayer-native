@@ -435,6 +435,13 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   }
 
   @objc
+  func setVolume(_ volume: NSNumber) {
+    // volume: 100-200 (100 = normal, 200 = 2x amplification)
+    let clamped = min(max(volume.int32Value, 100), 200)
+    player?.audio?.volume = clamped
+  }
+
+  @objc
   func setNowPlaying(_ options: NSDictionary) {
     let title = options["title"] as? String ?? nowPlayingInfo[MPMediaItemPropertyTitle] as? String ?? "Stream"
     let artist = options["artist"] as? String ?? nowPlayingInfo[MPMediaItemPropertyArtist] as? String ?? ""

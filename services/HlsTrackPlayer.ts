@@ -263,6 +263,11 @@ export async function getProgress(): Promise<Progress> {
   };
 }
 
+export async function setVolume(volume: number): Promise<void> {
+  ensureIOS();
+  await NativeHlsPlayer.setVolume(volume);
+}
+
 export async function getPlaybackState(): Promise<PlaybackState> {
   ensureIOS();
   return playbackState;
@@ -432,6 +437,7 @@ const TrackPlayer = {
   jumpForward,
   jumpBackward,
   getProgress,
+  setVolume,
   getPlaybackState,
   getActiveTrack,
   addEventListener,

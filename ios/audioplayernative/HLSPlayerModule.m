@@ -19,6 +19,7 @@ RCT_EXTERN_METHOD(seekTo:(NSNumber *)position resolver:(RCTPromiseResolveBlock)r
 RCT_EXTERN_METHOD(jumpForward:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)rejecter)
 RCT_EXTERN_METHOD(jumpBackward:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)rejecter)
 RCT_EXTERN_METHOD(getProgress:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)rejecter)
+RCT_EXTERN_METHOD(setVolume:(NSNumber *)volume)
 RCT_EXTERN_METHOD(setNowPlaying:(NSDictionary *)options)
 
 @end
