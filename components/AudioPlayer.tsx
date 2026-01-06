@@ -557,16 +557,13 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       setIsScrubbing(false);
     };
 
-    // Volume slider handlers - snaps to increments of 10
+    // Volume slider handler - snaps to increments of 10, applies immediately
     const handleVolumeChange = (value: number) => {
       const snapped = Math.round(value / 10) * 10;
-      setVolumeState(snapped);
-    };
-
-    const handleVolumeComplete = async (value: number) => {
-      const snapped = Math.round(value / 10) * 10;
-      setVolumeState(snapped);
-      await TrackPlayer.setVolume(snapped);
+      if (snapped !== volume) {
+        setVolumeState(snapped);
+        void TrackPlayer.setVolume(snapped);
+      }
     };
 
     // Display position - trust native position directly, use scrub position during slider interaction
@@ -831,7 +828,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               step={10}
               value={volume}
               onValueChange={handleVolumeChange}
-              onSlidingComplete={handleVolumeComplete}
               disabled={controlsDisabled}
               minimumTrackTintColor="#10B981"
               maximumTrackTintColor="#374151"
