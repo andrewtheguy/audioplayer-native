@@ -1,19 +1,21 @@
 import AVFoundation
 import MediaPlayer
-import MobileVLCKit
 import React
 import UIKit
 
 @objc(HLSPlayerModule)
-class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate {
-  private var player: VLCMediaPlayer?
+class HLSPlayerModule: RCTEventEmitter {
+  private var player: AVPlayer?
+  private var playerItem: AVPlayerItem?
+  private var timeObserverToken: Any?
+  
   private var forwardInterval: Double = 30
   private var backwardInterval: Double = 15
   private var isInitialized = false
   private var nowPlayingInfo: [String: Any] = [:]
   private var hasValidDuration = false
   private var desiredIsPlaying = false
-
+  
   // Seek state tracking
   private var isSeeking = false
   private var seekTargetPosition: Double = 0
@@ -21,31 +23,29 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   private var positionTimer: Timer?
   private var seekDebounceWorkItem: DispatchWorkItem?
 
-  // Pending start position and autoplay (set during load, executed when stream ready)
+  // Pending start position and autoplay
   private var pendingStartPosition: Double? = nil
   private var pendingAutoplay: Bool = false
   private var hasEmittedStreamReady = false
   private var hasEmittedStreamInfo = false
 
-  // Probed stream info (from AVURLAsset, fallback to VLC for unsupported formats)
+  // Stream info
   private var probedIsLive: Bool = false
   private var probedDuration: Double = 0
 
-  // VLC probing fallback state
-  private var probeMedia: VLCMedia?
-  private var probeResolver: RCTPromiseResolveBlock?
-  private var probeTitle: String?
-  private var probeUrlString: String?
-  private var probeStartPosition: Double? = nil
-  private var probeAutoplay: Bool = false
-
-  // Preload state (silent play-pause to position stream without autoplay)
+  // Preload state
   private var isPreloading: Bool = false
   private var preloadTargetPosition: Double = 0
+    
+  // KVO Contexts
+  private var playerItemStatusContext = 0
+  private var playerTimeControlStatusContext = 0
+  private var playerItemDurationContext = 0
 
   deinit {
     stopPositionTimer()
     seekDebounceWorkItem?.cancel()
+    removePlayerObservers()
     NotificationCenter.default.removeObserver(self)
   }
 
@@ -103,8 +103,9 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     }
 
     initialize()
+    resetPlayer()
 
-    // Store pending start position and autoplay - will be executed when stream is ready
+    // Store pending start position and autoplay
     let startPos = startPosition?.doubleValue
     if let start = startPos, start > 0 {
       self.pendingStartPosition = start
@@ -115,206 +116,215 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     self.hasEmittedStreamReady = false
     self.hasEmittedStreamInfo = false
 
-    // Try AVURLAsset first (more reliable for HLS)
+    // Create AVPlayer
     let asset = AVURLAsset(url: url)
-    asset.loadValuesAsynchronously(forKeys: ["duration"]) { [weak self] in
-      DispatchQueue.main.async {
-        guard let self = self else { return }
-
-        var error: NSError?
-        let status = asset.statusOfValue(forKey: "duration", error: &error)
-
-        if status == .loaded {
-          let durationSeconds = CMTimeGetSeconds(asset.duration)
-          // A stream is live only if duration is truly indefinite (NaN/Infinite)
-          self.probedIsLive = asset.duration == .indefinite || !durationSeconds.isFinite
-          self.probedDuration = (durationSeconds.isFinite && durationSeconds > 0) ? durationSeconds : 0
-
-          // AVURLAsset probe succeeded, set up VLC player
-          self.setupVLCPlayer(url: url, title: title, urlString: urlString, autoplay: autoplay, resolver: resolver)
-        } else {
-          // AVURLAsset failed, fallback to VLC probing (VLC often handles more formats/errors)
-          self.probeResolver = resolver
-          self.probeTitle = title
-          self.probeUrlString = urlString
-          self.probeStartPosition = startPos
-          self.probeAutoplay = autoplay
-
-          let media = VLCMedia(url: url)
-          media.delegate = self
-          self.probeMedia = media
-          _ = media.parse(options: .parseNetwork)
-        }
-      }
-    }
+    let item = AVPlayerItem(asset: asset)
+    self.playerItem = item
+    self.player = AVPlayer(playerItem: item)
+    
+    // Add Observers
+    addPlayerObservers(item: item, player: self.player!)
+    
+    // Initial probe of duration (optional, but helpful for immediate feedback if mostly working with VOD)
+    // We rely on 'status' change for the real ready state.
+    
+    // Preload setup
+    configurePlayerStart(title: title, urlString: urlString, autoplay: autoplay, resolver: resolver)
   }
 
-  // Helper to set up VLC player after probing completes
-  private func setupVLCPlayer(url: URL, title: String?, urlString: String, autoplay: Bool, resolver: @escaping RCTPromiseResolveBlock) {
-    // For live streams, don't try to restore a previous position - always start at live edge
-    if probedIsLive {
-      pendingStartPosition = nil
-    }
-
-    let media = VLCMedia(url: url)
-    configurePlayerWithMedia(media, title: title, urlString: urlString, autoplay: autoplay, resolver: resolver)
-  }
-
-  // Shared helper for configuring player with media (used by both AVURLAsset and VLC probe paths)
-  private func configurePlayerWithMedia(_ media: VLCMedia, title: String?, urlString: String, autoplay: Bool, resolver: @escaping RCTPromiseResolveBlock) {
-    // pendingStartPosition is kept for emitStreamReady() to seek after stream loads
-    var startPosition: Double = 0
-
-    if let startPos = pendingStartPosition, startPos > 0 {
-      startPosition = startPos
-      preloadTargetPosition = startPos
-    }
-
-    // If not autoplaying, we need to do a silent preload to initialize the stream
+  private func configurePlayerStart(title: String?, urlString: String, autoplay: Bool, resolver: @escaping RCTPromiseResolveBlock) {
+    // If pendingStartPosition, we'll seek when ready in emitStreamReady
+    
     if !autoplay {
       isPreloading = true
     }
-
-    // Emit playback-progress immediately so UI shows the correct initial position
-    // (stream-ready will be emitted by emitStreamReady() when VLC reports valid position,
-    // which will then seek to pendingStartPosition)
-    if startPosition > 0 {
-      lastStablePosition = startPosition
+    
+    // Emit initial playback-progress if we have a start position
+    if let startPos = pendingStartPosition, startPos > 0 {
+      lastStablePosition = startPos
       sendEvent(withName: "playback-progress", body: [
-        "position": startPosition,
-        "duration": probedDuration,
+        "position": startPos,
+        "duration": 0, // Unknown yet
         "seeking": false
       ])
     }
 
-    let mediaPlayer = VLCMediaPlayer()
-    mediaPlayer.delegate = self
-    mediaPlayer.media = media
-
-    player = mediaPlayer
-    hasValidDuration = !probedIsLive && probedDuration > 0
+    // Now Playing info init
     nowPlayingInfo = [:]
-    nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = probedIsLive
-    if probedDuration > 0 {
-      nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = probedDuration
-    }
-    updateNowPlaying(title: title ?? "Stream", url: urlString, duration: probedDuration > 0 ? probedDuration : nil)
+    nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = false // Assume VOD until proven otherwise or updated
+    updateNowPlaying(title: title ?? "Stream", url: urlString)
 
-    // Handle autoplay or preload
     if autoplay {
       pendingAutoplay = false
       desiredIsPlaying = true
       sendPlaybackIntent(true)
-      mediaPlayer.play()
+      player?.play()
       updateNowPlayingState(isPlaying: true)
-      sendPlaybackState("playing")
+      // Playback state will be updated via KVO
     } else {
-      // Silent preload: mute audio, play briefly to initialize stream, then pause
-      // This ensures VLC opens the media so it's ready when user presses play
-      mediaPlayer.audio?.isMuted = true
-      mediaPlayer.play()
-      mediaPlayer.pause()
-      // isPreloading remains true to suppress position events until user plays
-      // Keep muted - will unmute when user explicitly plays
+        // Just prepare
+        // AVPlayer doesn't strictly need a "preload" call like VLC might to open headers, creating the item is enough.
+        // We just wait for ready status.
     }
 
     resolver(nil)
   }
-
-  // VLCMediaDelegate - called when VLC media parsing completes (fallback path)
-  func mediaDidFinishParsing(_ aMedia: VLCMedia) {
-    DispatchQueue.main.async { [weak self] in
-      guard let self = self else { return }
-
-      // Get duration from parsed media
-      let lengthMs = aMedia.length.intValue
-      let durationSeconds = Double(lengthMs) / 1000.0
-
-      // A stream is live only if duration is 0, negative, or invalid
-      self.probedIsLive = lengthMs <= 0 || !durationSeconds.isFinite
-      self.probedDuration = (durationSeconds.isFinite && durationSeconds > 0) ? durationSeconds : 0
-
-      // Restore pending state from probe context
-      // For live streams, don't try to restore a previous position - always start at live edge
-      if !self.probedIsLive, let startPos = self.probeStartPosition, startPos > 0 {
-        self.pendingStartPosition = startPos
+    
+  private func addPlayerObservers(item: AVPlayerItem, player: AVPlayer) {
+      item.addObserver(self, forKeyPath: "status", options: [.new], context: &playerItemStatusContext)
+      item.addObserver(self, forKeyPath: "duration", options: [.new], context: &playerItemDurationContext)
+      player.addObserver(self, forKeyPath: "timeControlStatus", options: [.new], context: &playerTimeControlStatusContext)
+      
+      NotificationCenter.default.addObserver(self, selector: #selector(playerDidFinishPlaying), name: .AVPlayerItemDidPlayToEndTime, object: item)
+      NotificationCenter.default.addObserver(self, selector: #selector(playerError), name: .AVPlayerItemFailedToPlayToEndTime, object: item)
+      // Stall detection
+      NotificationCenter.default.addObserver(self, selector: #selector(playerStalled), name: .AVPlayerItemPlaybackStalled, object: item)
+  }
+    
+  private func removePlayerObservers() {
+      guard let item = playerItem, let player = player else { return }
+      item.removeObserver(self, forKeyPath: "status", context: &playerItemStatusContext)
+      item.removeObserver(self, forKeyPath: "duration", context: &playerItemDurationContext)
+      player.removeObserver(self, forKeyPath: "timeControlStatus", context: &playerTimeControlStatusContext)
+      NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: item)
+      NotificationCenter.default.removeObserver(self, name: .AVPlayerItemFailedToPlayToEndTime, object: item)
+      NotificationCenter.default.removeObserver(self, name: .AVPlayerItemPlaybackStalled, object: item)
+  }
+    
+  override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
+      if context == &playerItemStatusContext {
+          guard let item = playerItem else { return }
+          if item.status == .readyToPlay {
+              // Check duration
+              let duration = item.duration.seconds
+              let isLive = item.duration == .indefinite || !duration.isFinite
+              self.probedIsLive = isLive
+              self.probedDuration = (duration.isFinite && duration > 0) ? duration : 0
+              self.hasValidDuration = !isLive && self.probedDuration > 0
+              
+              _ = emitStreamReady()
+              sendPlaybackState("ready")
+          } else if item.status == .failed {
+              let msg = item.error?.localizedDescription ?? "Unknown error"
+              sendEvent(withName: "playback-error", body: ["message": msg])
+              sendPlaybackState("stopped")
+          }
+      } else if context == &playerItemDurationContext {
+         // Update duration if it changes (e.g. HLS loaded more)
+          let duration = playerItem?.duration.seconds ?? 0
+          if duration.isFinite && duration > 0 {
+             self.probedDuration = duration
+             self.hasValidDuration = true
+             updateNowPlayingProgress()
+          }
+      } else if context == &playerTimeControlStatusContext {
+          guard let player = player else { return }
+          switch player.timeControlStatus {
+          case .paused:
+              sendPlaybackState("paused")
+              updateNowPlayingState(isPlaying: false)
+          case .playing:
+              sendPlaybackState("playing")
+              updateNowPlayingState(isPlaying: true)
+          case .waitingToPlayAtSpecifiedRate:
+              sendPlaybackState("buffering")
+          @unknown default:
+              break
+          }
       } else {
-        self.pendingStartPosition = nil
+          super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)
       }
-      self.pendingAutoplay = self.probeAutoplay
-
-      // Set up VLC player with the parsed media
-      guard let resolver = self.probeResolver,
-            let urlString = self.probeUrlString else { return }
-
-      let title = self.probeTitle
-
-      // Clean up probe state before calling helper
-      self.probeMedia = nil
-      self.probeResolver = nil
-      self.probeTitle = nil
-      self.probeUrlString = nil
-      self.probeStartPosition = nil
-      self.probeAutoplay = false
-
-      self.configurePlayerWithMedia(aMedia, title: title, urlString: urlString, autoplay: self.pendingAutoplay, resolver: resolver)
-    }
   }
 
-  // MARK: - Core playback methods (shared by @objc and remote handlers)
+  @objc private func playerDidFinishPlaying(note: NSNotification) {
+      sendPlaybackState("stopped")
+      sendEvent(withName: "remote-stop", body: nil) // Or just stop?
+      // Native behavior for finished:
+      player?.seek(to: .zero) 
+      desiredIsPlaying = false
+      sendPlaybackIntent(false)
+      updateNowPlayingState(isPlaying: false)
+  }
+
+  @objc private func playerError(note: NSNotification) {
+      // Extract error
+      if let error = note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error {
+          sendEvent(withName: "playback-error", body: ["message": error.localizedDescription])
+      }
+  }
+    
+  @objc private func playerStalled(note: NSNotification) {
+      sendPlaybackState("buffering")
+  }
+    
+  private func resetPlayer() {
+      removePlayerObservers()
+      player?.pause()
+      player = nil
+      playerItem = nil
+      
+      stopPositionTimer()
+      startPositionTimer() // Restart timer
+      
+      seekDebounceWorkItem?.cancel()
+      seekDebounceWorkItem = nil
+      
+      desiredIsPlaying = false
+      sendPlaybackIntent(false)
+      hasValidDuration = false
+      isSeeking = false
+      seekTargetPosition = 0
+      lastStablePosition = 0
+      pendingStartPosition = nil
+      pendingAutoplay = false
+      hasEmittedStreamReady = false
+      hasEmittedStreamInfo = false
+      isPreloading = false
+      preloadTargetPosition = 0
+      
+      nowPlayingInfo = [:]
+      nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
+      MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+      updateRemoteSeekAvailability(isLive: true)
+      updateNowPlayingState(isPlaying: false)
+      sendPlaybackState("none")
+  }
+
+
+  // MARK: - Core playback methods
 
   private func performPlay() {
     initialize()
     desiredIsPlaying = true
     sendPlaybackIntent(true)
-
-    // Unmute audio if it was muted during preload
-    if let audio = player?.audio, audio.isMuted {
-      audio.isMuted = false
-    }
-
-    // Clear preloading state if still set
     isPreloading = false
-
-    // If player is in stopped/ended state, seek to beginning before playing
-    // VLC won't resume from an ended state without seeking first
-    if let player = player, player.state == .stopped || player.state == .ended {
-      player.time = VLCTime(int: 0)
+    
+    // If ended, seek to start
+    if playerItem?.currentTime() == playerItem?.duration {
+         player?.seek(to: .zero)
     }
 
     player?.play()
-    updateNowPlayingState(isPlaying: true)
-    updateNowPlayingProgress()
-    sendPlaybackState("playing")
   }
 
   private func performPause() {
     desiredIsPlaying = false
     sendPlaybackIntent(false)
     player?.pause()
-    updateNowPlayingState(isPlaying: false)
-    updateNowPlayingProgress()
-    sendPlaybackState("paused")
   }
 
   private func performStop() {
-    stopPositionTimer()
-    if let player = player {
-      player.stop()
-      player.time = VLCTime(int: 0)
-    }
+    // stopPositionTimer() // Keep timer running to avoid recreating it constantly if we reuse
+    player?.pause()
+    player?.seek(to: .zero)
+    
     desiredIsPlaying = false
     sendPlaybackIntent(false)
-    hasValidDuration = false
-    isSeeking = false
-    seekTargetPosition = 0
-    lastStablePosition = 0
-    nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = nil
-    nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
-    updateRemoteSeekAvailability(isLive: true)
-    updateNowPlayingState(isPlaying: false)
-    updateNowPlayingProgress()
+    // AVPlayer doesn't truly "stop" like VLC, we just pause and reset postion.
+    // We can interpret this as stopped.
+    
     sendPlaybackState("stopped")
+    updateNowPlayingState(isPlaying: false)
   }
 
   // MARK: - React Native exposed methods
@@ -339,38 +349,12 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
   @objc
   func reset(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
-    stopPositionTimer()
-    seekDebounceWorkItem?.cancel()
-    seekDebounceWorkItem = nil
-    player?.stop()
-    player = nil
-    desiredIsPlaying = false
-    sendPlaybackIntent(false)
-    hasValidDuration = false
-    isSeeking = false
-    seekTargetPosition = 0
-    lastStablePosition = 0
-    pendingStartPosition = nil
-    pendingAutoplay = false
-    hasEmittedStreamReady = false
-    hasEmittedStreamInfo = false
-    isPreloading = false
-    preloadTargetPosition = 0
-    nowPlayingInfo = [:]
-    nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = true
-    MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
-    updateRemoteSeekAvailability(isLive: true)
-    updateNowPlayingState(isPlaying: false)
-    updateNowPlayingProgress()
-    sendPlaybackState("none")
+    resetPlayer()
     resolve(nil)
   }
-
-  /// Core seek implementation shared by seekTo() and remote jump handlers.
-  /// Handles seek coalescing and debouncing: rapid seeks are coalesced and the actual VLC seek
-  /// is debounced to prevent crashes from rapid time changes.
+    
   private func performSeek(to targetSeconds: Double) {
-    guard player != nil else { return }
+    guard let player = player else { return }
 
     let clampedTarget = max(0, targetSeconds)
     let wasAlreadySeeking = isSeeking
@@ -378,12 +362,10 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     seekTargetPosition = clampedTarget
     isSeeking = true
 
-    // Only emit seek-started for new seeks, not coalesced updates
     if !wasAlreadySeeking {
       sendEvent(withName: "seek-started", body: ["targetPosition": clampedTarget])
     }
 
-    // Immediately emit target position for responsive UI
     sendEvent(withName: "playback-progress", body: [
       "position": clampedTarget,
       "duration": safeDuration(),
@@ -392,13 +374,17 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
     updateNowPlayingProgress()
 
-    // Debounce the actual VLC seek to prevent crashes from rapid seeks
     seekDebounceWorkItem?.cancel()
 
     let workItem = DispatchWorkItem { [weak self] in
       guard let self = self, let player = self.player else { return }
-      let millis = Int32(self.seekTargetPosition * 1000)
-      player.time = VLCTime(int: millis)
+      let targetTime = CMTime(seconds: self.seekTargetPosition, preferredTimescale: 1000)
+      player.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero) { finished in
+          if finished {
+              self.isSeeking = false
+              self.sendEvent(withName: "seek-completed", body: nil)
+          }
+      }
     }
     seekDebounceWorkItem = workItem
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: workItem)
@@ -433,16 +419,18 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     let duration = safeDuration()
     resolve(["position": position, "duration": duration])
   }
-
+    
   @objc
   func setNowPlaying(_ options: NSDictionary) {
     let title = options["title"] as? String ?? nowPlayingInfo[MPMediaItemPropertyTitle] as? String ?? "Stream"
     let artist = options["artist"] as? String ?? nowPlayingInfo[MPMediaItemPropertyArtist] as? String ?? ""
     let url = options["url"] as? String ?? nowPlayingInfo["url"] as? String ?? ""
     let duration = options["duration"] as? NSNumber
-
+    
     updateNowPlaying(title: title, artist: artist, url: url, duration: duration?.doubleValue ?? safeDuration())
   }
+
+  // MARK: - Helpers
 
   private func configureAudioSession() {
     let audioSession = AVAudioSession.sharedInstance()
@@ -469,9 +457,8 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   }
 
   @objc private func handleAppForeground() {
-    // Re-sync position and state when app returns from background
     updateNowPlayingProgress()
-    updateNowPlayingState(isPlaying: player?.isPlaying == true)
+    updateNowPlayingState(isPlaying: player?.timeControlStatus == .playing)
   }
 
   private func startPositionTimer() {
@@ -480,18 +467,12 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
       self?.emitPeriodicPosition()
     }
   }
-
+  
   private func stopPositionTimer() {
     positionTimer?.invalidate()
     positionTimer = nil
   }
 
-  // MARK: - Stream Ready Emission (single point of emission)
-
-  /// Emits "stream-ready" event if not already emitted. This is the sole emission point for stream-ready.
-  /// Handles: hasEmittedStreamReady guard, pendingStartPosition (manual seek if VLC start-time didn't position),
-  /// seekTargetPosition, and pendingAutoplay.
-  /// - Returns: true if this was the first emission (caller should return early), false if already emitted.
   private func emitStreamReady() -> Bool {
     guard !hasEmittedStreamReady else { return false }
     hasEmittedStreamReady = true
@@ -499,15 +480,14 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     let currentPos = safePosition()
     let duration = safeDuration()
 
-    // Use pending start position for reported value if set, otherwise current position
     let reportedPosition: Double
     if let startPos = pendingStartPosition, startPos > 0 {
       reportedPosition = startPos
     } else {
       reportedPosition = currentPos
     }
+    
     let effectiveDuration = probedDuration > 0 ? probedDuration : duration
-    // Trust probedIsLive from AVURLAsset - VLC may report duration for live streams
     let effectiveIsLive = probedIsLive || (effectiveDuration <= 0 || !effectiveDuration.isFinite)
 
     sendEvent(withName: "stream-ready", body: [
@@ -518,45 +498,28 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
     updateRemoteSeekAvailability(isLive: effectiveIsLive)
 
-    // If pending start position exists and VLC hasn't positioned there yet, perform manual seek
     if let startPos = pendingStartPosition, startPos > 0 {
       pendingStartPosition = nil
-
-      // Only seek if current position differs significantly from target (start-time option may have worked)
       if abs(currentPos - startPos) > 1.0 {
-        seekTargetPosition = startPos
-        isSeeking = true
-        sendEvent(withName: "seek-started", body: ["targetPosition": startPos])
-        player?.time = VLCTime(int: Int32(startPos * 1000))
-        sendEvent(withName: "playback-progress", body: [
-          "position": startPos,
-          "duration": effectiveDuration,
-          "seeking": true
-        ])
+        performSeek(to: startPos)
         return true
       }
     }
-
-    // Handle pending autoplay
+      
     if pendingAutoplay {
-      pendingAutoplay = false
-      desiredIsPlaying = true
-      sendPlaybackIntent(true)
-      player?.play()
-      updateNowPlayingState(isPlaying: true)
-      sendPlaybackState("playing")
+       // KVO handler will handle state update if it works, but we should make sure we command play
+       player?.play()
     }
-
+    
     return true
   }
 
   private func emitPeriodicPosition() {
-    guard let player = player, player.isPlaying, !isSeeking, !isPreloading else { return }
+    guard let player = player, player.timeControlStatus == .playing, !isSeeking, !isPreloading else { return }
 
     let position = safePosition()
     let duration = safeDuration()
 
-    // Skip if position hasn't meaningfully changed
     if abs(position - lastStablePosition) < 0.1 { return }
 
     lastStablePosition = position
@@ -597,7 +560,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
     commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
       guard let strongSelf = self else { return .commandFailed }
-      if strongSelf.player?.isPlaying == true {
+        if strongSelf.player?.timeControlStatus == .playing {
         strongSelf.handleRemotePause()
       } else {
         strongSelf.handleRemotePlay()
@@ -679,8 +642,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   private func handleRemoteNext() {
     guard !isLiveStream() else { return }
     let current = effectivePosition()
-    let duration = safeDuration()
-    let target = duration > 0 ? min(current + forwardInterval, duration) : current + forwardInterval
+    let target = current + forwardInterval // Just jump forward for next? Or use logic? Kept consistent with old code
     performSeek(to: target)
     sendEvent(withName: "remote-next", body: ["interval": forwardInterval, "position": current])
   }
@@ -701,20 +663,17 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
   }
 
   private func currentPosition() -> Double {
-    guard let time = player?.time else { return 0 }
-    return Double(time.intValue) / 1000.0
+    guard let time = player?.currentTime() else { return 0 }
+    return time.seconds
   }
 
-  /// Returns seekTargetPosition if a seek is in progress, otherwise currentPosition().
-  /// Use this for jump calculations to support rapid consecutive jumps.
   private func effectivePosition() -> Double {
     return isSeeking ? seekTargetPosition : currentPosition()
   }
 
   private func currentDuration() -> Double {
-    guard let length = player?.media?.length else { return 0 }
-    let value = Double(length.intValue) / 1000.0
-    return value.isFinite ? value : 0
+    guard let duration = playerItem?.duration.seconds else { return 0 }
+    return duration.isFinite ? duration : 0
   }
 
   private func safePosition() -> Double {
@@ -730,12 +689,10 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     if value.isFinite && value > 0 {
       return value
     }
-    // Return 0 when duration is unknown - caller should handle this
     return 0
   }
 
   private func isLiveStream() -> Bool {
-    // Trust probedIsLive from AVURLAsset - VLC may report duration for live streams
     if probedIsLive { return true }
     if hasValidDuration { return false }
     let duration = safeDuration()
@@ -760,7 +717,6 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     let resolvedDuration = duration ?? safeDuration()
     if resolvedDuration > 0 {
       nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = resolvedDuration
-      // Only mark as non-live once we have a valid duration
       if hasValidDuration {
         nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = false
       }
@@ -769,7 +725,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
     let position = safePosition()
     nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = position
-    nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = player?.isPlaying == true ? 1.0 : 0.0
+    nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = player?.rate ?? 0.0
     MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
   }
 
@@ -785,7 +741,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     if duration > 0 {
       nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
     }
-    nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = player?.isPlaying == true ? 1.0 : 0.0
+    nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = player?.rate ?? 0.0
     MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
   }
 
@@ -795,147 +751,5 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
   private func sendPlaybackIntent(_ playing: Bool) {
     sendEvent(withName: "playback-intent", body: ["playing": playing])
-  }
-
-  private func mapState(_ state: VLCMediaPlayerState) -> String {
-    switch state {
-    case .playing:
-      return "playing"
-    case .paused:
-      return "paused"
-    case .stopped, .ended:
-      return "stopped"
-    case .buffering, .opening:
-      return "buffering"
-    case .error:
-      return "error"
-    default:
-      return "none"
-    }
-  }
-
-  func mediaPlayerStateChanged(_ aNotification: Notification) {
-    guard let state = player?.state else { return }
-
-    // When playback naturally ends or stops, update intent to not playing
-    if state == .ended || state == .stopped {
-      if desiredIsPlaying {
-        desiredIsPlaying = false
-        sendPlaybackIntent(false)
-      }
-      sendPlaybackState("stopped")
-      updateNowPlayingState(isPlaying: false)
-      return
-    }
-
-    // If user intended pause, do not allow buffering/opening to override to "buffering".
-    if desiredIsPlaying {
-      let mapped = mapState(state)
-      sendPlaybackState(mapped)
-      updateNowPlayingState(isPlaying: mapped == "playing")
-    } else {
-      // When paused by intent, keep reporting paused
-      sendPlaybackState("paused")
-      updateNowPlayingState(isPlaying: false)
-    }
-
-    if state == .error {
-      // Try to get more details about the error from VLC
-      var errorDetail = "Unknown error"
-      if let media = player?.media {
-        let mediaState = media.state
-        switch mediaState {
-        case .error:
-          errorDetail = "Media error - stream may be unavailable or rate limited"
-        case .nothingSpecial:
-          errorDetail = "Failed to load stream"
-        default:
-          errorDetail = "Playback error (media state: \(mediaState.rawValue))"
-        }
-      }
-      sendEvent(withName: "playback-error", body: [
-        "message": "Playback failed",
-        "detail": errorDetail
-      ])
-    }
-  }
-
-  func mediaPlayerTimeChanged(_ aNotification: Notification) {
-    // During preload, suppress all position events to keep showing the target position
-    if isPreloading {
-      return
-    }
-
-    let rawPosition = safePosition()
-    let duration = safeDuration()
-
-    // Once we get a valid duration, update Now Playing
-    // Trust probedIsLive - VLC may report duration for live streams
-    if !hasValidDuration && !hasEmittedStreamInfo && duration > 0 {
-      hasEmittedStreamInfo = true
-      if probedIsLive {
-        // Live stream with sliding-window duration - keep live semantics
-        sendEvent(withName: "stream-info", body: [
-          "duration": duration,
-          "isLive": true
-        ])
-        updateRemoteSeekAvailability(isLive: true)
-      } else {
-        hasValidDuration = true
-        nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = false
-        nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
-        sendEvent(withName: "stream-info", body: [
-          "duration": duration,
-          "isLive": false
-        ])
-        updateRemoteSeekAvailability(isLive: false)
-      }
-    }
-
-    // Emit stream-ready via centralized helper (handles hasEmittedStreamReady guard,
-    // pendingStartPosition verification/seek, and pendingAutoplay)
-    if emitStreamReady() {
-      return
-    }
-
-    // During seeking: check if position stabilized near target
-    if isSeeking {
-      let tolerance: Double = 0.5
-      let isNearTarget = abs(rawPosition - seekTargetPosition) < tolerance
-
-      if isNearTarget {
-        // Seek complete
-        isSeeking = false
-        lastStablePosition = rawPosition
-        sendEvent(withName: "seek-completed", body: ["position": rawPosition])
-
-        // Handle pending autoplay after seek completes
-        if pendingAutoplay {
-          pendingAutoplay = false
-          desiredIsPlaying = true
-          sendPlaybackIntent(true)
-          player?.play()
-          updateNowPlayingState(isPlaying: true)
-          sendPlaybackState("playing")
-        }
-      } else {
-        // Still seeking - emit target position for stable UI
-        sendEvent(withName: "playback-progress", body: [
-          "position": seekTargetPosition,
-          "duration": duration,
-          "seeking": true
-        ])
-        return
-      }
-    }
-
-    lastStablePosition = rawPosition
-
-    sendEvent(withName: "playback-progress", body: [
-      "position": rawPosition,
-      "duration": duration,
-      "seeking": false
-    ])
-    updateNowPlayingProgress()
   }
 }
