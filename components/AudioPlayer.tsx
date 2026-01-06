@@ -33,7 +33,6 @@ export interface AudioPlayerHandle {
 }
 
 interface AudioPlayerProps {
-  fingerprint: string;
   onSessionStatusChange?: (status: SessionStatus) => void;
 }
 
@@ -51,7 +50,7 @@ function formatTime(seconds: number | null): string {
 const SAVE_POSITION_INTERVAL_MS = 5000;
 
 export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
-  ({ fingerprint, onSessionStatusChange }, ref) => {
+  ({ onSessionStatusChange }, ref) => {
     const [history, setHistory] = useState<HistoryEntry[]>([]);
     const [url, setUrl] = useState("");
     const [title, setTitle] = useState("");
@@ -636,7 +635,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           <NostrSyncPanel
             ref={syncRef}
             encryptionKeys={session.encryptionKeys}
-            fingerprint={fingerprint}
             history={history}
             session={session}
             onHistoryLoaded={(merged) => {
@@ -892,7 +890,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         <NostrSyncPanel
           ref={syncRef}
           encryptionKeys={session.encryptionKeys}
-          fingerprint={fingerprint}
           history={history}
           session={session}
           onHistoryLoaded={(merged) => {

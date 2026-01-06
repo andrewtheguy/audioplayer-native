@@ -1,4 +1,4 @@
-import { getSavedNpub, getSecondarySecret, getStorageScope } from "@/lib/identity";
+import { getSavedNpub, getSecondarySecret } from "@/lib/identity";
 import { parseNpub } from "@/lib/nostr-crypto";
 import { Redirect } from "expo-router";
 import { useEffect, useState } from "react";
@@ -30,8 +30,7 @@ export default function Index() {
           return;
         }
 
-        const fingerprint = getStorageScope(pubkeyHex);
-        const secondarySecret = await getSecondarySecret(fingerprint);
+        const secondarySecret = await getSecondarySecret();
 
         if (mounted) {
           setHasIdentity(Boolean(secondarySecret));

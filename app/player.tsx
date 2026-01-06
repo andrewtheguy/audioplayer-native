@@ -4,7 +4,6 @@ import {
   clearAllIdentityData,
   getSavedNpub,
   getSecondarySecret,
-  getStorageScope,
 } from "@/lib/identity";
 import { parseNpub } from "@/lib/nostr-crypto";
 import * as TrackPlayer from "@/services/HlsTrackPlayer";
@@ -45,8 +44,6 @@ function StatusBadge({ status }: { status: SessionStatus }) {
 interface IdentityData {
   npub: string;
   pubkeyHex: string;
-  fingerprint: string;
-  secondarySecret: string;
 }
 
 export default function PlayerScreen() {
@@ -78,8 +75,7 @@ export default function PlayerScreen() {
           return;
         }
 
-        const fingerprint = getStorageScope(pubkeyHex);
-        const secondarySecret = await getSecondarySecret(fingerprint);
+        const secondarySecret = await getSecondarySecret();
 
         if (!secondarySecret) {
           if (mounted) {
@@ -90,7 +86,7 @@ export default function PlayerScreen() {
         }
 
         if (mounted) {
-          setIdentity({ npub, pubkeyHex, fingerprint, secondarySecret });
+          setIdentity({ npub, pubkeyHex });
           setLoading(false);
         }
       } catch (error) {
@@ -117,10 +113,7 @@ export default function PlayerScreen() {
         // Ignore teardown failures on logout
       }
 
-      if (!identity?.fingerprint) {
-        throw new Error("No fingerprint to clear");
-      }
-      await clearAllIdentityData(identity.fingerprint);
+      await clearAllIdentityData();
       router.replace("/login");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -167,7 +160,6 @@ export default function PlayerScreen() {
           </View>
         ) : null}
         <AudioPlayer
-          fingerprint={identity.fingerprint}
           onSessionStatusChange={setSessionStatus}
         />
       </ScrollView>

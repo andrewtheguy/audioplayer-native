@@ -1,6 +1,5 @@
 import {
   getSavedNpub,
-  getStorageScope,
   saveNpub,
   setSecondarySecret,
 } from "@/lib/identity";
@@ -33,7 +32,6 @@ export default function LoginScreen() {
   const [npub, setNpub] = useState("");
   const [secret, setSecret] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [fingerprint, setFingerprint] = useState<string | null>(null);
   const [pubkeyHex, setPubkeyHex] = useState<string | null>(null);
 
   // Check for saved npub on mount
@@ -47,7 +45,6 @@ export default function LoginScreen() {
           if (hex) {
             setNpub(savedNpub);
             setPubkeyHex(hex);
-            setFingerprint(getStorageScope(hex));
             setStep("secret");
           }
         }
@@ -76,7 +73,6 @@ export default function LoginScreen() {
     try {
       await saveNpub(trimmed);
       setPubkeyHex(hex);
-      setFingerprint(getStorageScope(hex));
       setStep("secret");
       setError(null);
     } catch (err) {
@@ -97,7 +93,7 @@ export default function LoginScreen() {
       return;
     }
 
-    if (!pubkeyHex || !fingerprint) {
+    if (!pubkeyHex) {
       setError("Missing npub. Please go back and enter it.");
       return;
     }
@@ -125,7 +121,7 @@ export default function LoginScreen() {
       await deriveEncryptionKey(playerId);
 
       // Save the secret and navigate to player
-      await setSecondarySecret(fingerprint, trimmed);
+      await setSecondarySecret(trimmed);
       router.replace("/player");
     } catch (err) {
       if (err instanceof PlayerIdDecryptionError) {

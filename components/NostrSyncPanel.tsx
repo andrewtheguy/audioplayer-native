@@ -22,7 +22,6 @@ export interface NostrSyncPanelHandle {
 
 interface NostrSyncPanelProps {
   encryptionKeys: NostrKeys | null;
-  fingerprint: string;
   history: HistoryEntry[];
   session: NostrSessionApi;
   onHistoryLoaded: (merged: HistoryEntry[]) => void;
@@ -52,8 +51,7 @@ function StatusBadge({ status }: { status: SessionStatus }) {
 }
 
 export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelProps>(
-  ({ encryptionKeys, fingerprint, history, session, onHistoryLoaded, onRemoteSync }, ref) => {
-    const [npubFingerprint, setNpubFingerprint] = useState<string | null>(null);
+  ({ encryptionKeys, history, session, onHistoryLoaded, onRemoteSync }, ref) => {
     const [showDetails, setShowDetails] = useState(false);
 
     const hasKeys = encryptionKeys !== null;
@@ -85,24 +83,6 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
         performInitialLoad();
       }
     }, [hasKeys, session.sessionStatus, performInitialLoad]);
-
-    // Compute npub fingerprint for display
-    useEffect(() => {
-      if (!fingerprint) {
-        setNpubFingerprint(null);
-        return;
-      }
-
-      try {
-        // Format fingerprint as XXXX-XXXX-XXXX-XXXX
-        const raw = fingerprint.toUpperCase().slice(0, 16);
-        const formatted = `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}-${raw.slice(12, 16)}`;
-        setNpubFingerprint(formatted);
-      } catch (err) {
-        console.error("Failed to format fingerprint", err);
-        setNpubFingerprint(null);
-      }
-    }, [fingerprint]);
 
     const handleStartSession = () => {
       if (isBusy) return;
@@ -225,10 +205,6 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
 
         {showDetails && (
           <View style={styles.detailsContainer}>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Fingerprint</Text>
-              <Text style={styles.detailValue}>{npubFingerprint ?? "..."}</Text>
-            </View>
             <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Relays</Text>
               <Text style={styles.detailValue}>{RELAYS.length} connected</Text>

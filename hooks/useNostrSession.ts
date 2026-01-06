@@ -4,7 +4,6 @@ import {
   clearSecondarySecret,
   getSavedNpub,
   getSecondarySecret,
-  getStorageScope,
   saveNpub,
   setSecondarySecret,
 } from "@/lib/identity";
@@ -41,7 +40,6 @@ interface UseNostrSessionResult {
   // Identity
   npub: string | null;
   pubkeyHex: string | null;
-  fingerprint: string | null;
 
   // Player ID and encryption keys
   playerId: string | null;
@@ -77,7 +75,6 @@ export function useNostrSession({
   // Identity state
   const [npub, setNpub] = useState<string | null>(null);
   const [pubkeyHex, setPubkeyHex] = useState<string | null>(null);
-  const [fingerprint, setFingerprint] = useState<string | null>(null);
 
   // Player ID and encryption keys (combined for atomic updates)
   const [playerState, setPlayerState] = useState<{
@@ -142,7 +139,6 @@ export function useNostrSession({
       if (!savedNpub) {
         setNpub(null);
         setPubkeyHex(null);
-        setFingerprint(null);
         setSecondarySecretState(null);
         setSessionStatus("no_npub");
         return;
@@ -161,12 +157,8 @@ export function useNostrSession({
       setNpub(savedNpub);
       setPubkeyHex(hex);
 
-      // 3. Get fingerprint for storage scoping
-      const fp = getStorageScope(hex);
-      setFingerprint(fp);
-
-      // 4. Check for cached secondary secret
-      const cachedSecret = await getSecondarySecret(fp);
+      // 3. Check for cached secondary secret
+      const cachedSecret = await getSecondarySecret();
       if (!cachedSecret) {
         setSessionStatus("needs_secret");
         return;
@@ -174,7 +166,7 @@ export function useNostrSession({
 
       setSecondarySecretState(cachedSecret);
 
-      // 5. Try to load player id from relay
+      // 4. Try to load player id from relay
       setSessionStatus("loading");
       try {
         const remotePlayerId = await loadPlayerIdFromNostr(hex, cachedSecret);
@@ -196,7 +188,7 @@ export function useNostrSession({
           setSessionNotice("Wrong secondary secret. Please re-enter.");
           // Clear the invalid secret from both React state and storage
           setSecondarySecretState(null);
-          await clearSecondarySecret(fp);
+          await clearSecondarySecret();
           return;
         }
         // Network or other error - preserve the secret and show error
@@ -239,12 +231,8 @@ export function useNostrSession({
       setNpub(trimmed);
       setPubkeyHex(hex);
 
-      // Compute fingerprint
-      const fp = getStorageScope(hex);
-      setFingerprint(fp);
-
-      // Check if we have a cached secret for this npub
-      const cachedSecret = await getSecondarySecret(fp);
+      // Check if we have a cached secret
+      const cachedSecret = await getSecondarySecret();
       if (cachedSecret) {
         setSecondarySecretState(cachedSecret);
         // Try to load player id
@@ -264,7 +252,7 @@ export function useNostrSession({
         } catch (err) {
           if (err instanceof PlayerIdDecryptionError) {
             setSecondarySecretState(null);
-            await clearSecondarySecret(fp);
+            await clearSecondarySecret();
             setSessionStatus("needs_secret");
             setSessionNotice("Cached secret is invalid. Please re-enter.");
             return true;
@@ -294,7 +282,7 @@ export function useNostrSession({
         return false;
       }
 
-      if (!pubkeyHex || !fingerprint) {
+      if (!pubkeyHex) {
         setSessionNotice("No identity loaded.");
         return false;
       }
@@ -309,14 +297,14 @@ export function useNostrSession({
         if (remotePlayerId && isValidPlayerId(remotePlayerId)) {
           // Derive keys first, then set state atomically
           const keys = await deriveEncryptionKey(remotePlayerId);
-          await setSecondarySecret(fingerprint, trimmed);
+          await setSecondarySecret(trimmed);
           setPlayerState({ playerId: remotePlayerId, encryptionKeys: keys });
           setSessionStatus("idle");
           setSessionNotice(null);
           return true;
         }
         // No player id exists - save secret but show setup needed
-        await setSecondarySecret(fingerprint, trimmed);
+        await setSecondarySecret(trimmed);
         setSessionStatus("needs_setup");
         setSessionNotice("No player ID found. Please set up your identity on the web app first.");
         return true;
@@ -329,7 +317,7 @@ export function useNostrSession({
           return false;
         }
         // Network or other error - persist secret for retry
-        await setSecondarySecret(fingerprint, trimmed);
+        await setSecondarySecret(trimmed);
         setSessionNotice(
           `Network error: ${err instanceof Error ? err.message : "Unknown error"}. Please try again.`
         );
@@ -337,23 +325,19 @@ export function useNostrSession({
         return false;
       }
     },
-    [pubkeyHex, fingerprint]
+    [pubkeyHex]
   );
 
   // Clear identity (logout)
   const clearIdentity = useCallback(async (): Promise<void> => {
-    if (!fingerprint) {
-      throw new Error("No fingerprint to clear");
-    }
-    await clearAllIdentityData(fingerprint);
+    await clearAllIdentityData();
     setNpub(null);
     setPubkeyHex(null);
-    setFingerprint(null);
     setSecondarySecretState(null);
     setPlayerState({ playerId: null, encryptionKeys: null });
     setSessionStatus("no_npub");
     setSessionNotice(null);
-  }, [fingerprint]);
+  }, []);
 
   const startTakeoverGrace = useCallback(() => {
     setIgnoreRemoteUntil(Date.now() + takeoverGraceMs);
@@ -366,7 +350,6 @@ export function useNostrSession({
   return {
     npub,
     pubkeyHex,
-    fingerprint,
     playerId,
     encryptionKeys,
     secondarySecret,
