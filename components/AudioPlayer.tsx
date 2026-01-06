@@ -557,8 +557,13 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       setIsScrubbing(false);
     };
 
-    // Volume slider handler - snaps to increments of 10
-    const handleVolumeChange = async (value: number) => {
+    // Volume slider handlers - snaps to increments of 10
+    const handleVolumeChange = (value: number) => {
+      const snapped = Math.round(value / 10) * 10;
+      setVolumeState(snapped);
+    };
+
+    const handleVolumeComplete = async (value: number) => {
       const snapped = Math.round(value / 10) * 10;
       setVolumeState(snapped);
       await TrackPlayer.setVolume(snapped);
@@ -825,7 +830,8 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               maximumValue={200}
               step={10}
               value={volume}
-              onSlidingComplete={handleVolumeChange}
+              onValueChange={handleVolumeChange}
+              onSlidingComplete={handleVolumeComplete}
               disabled={controlsDisabled}
               minimumTrackTintColor="#10B981"
               maximumTrackTintColor="#374151"
