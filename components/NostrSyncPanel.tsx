@@ -17,9 +17,6 @@ interface NostrSessionApi {
 }
 
 export interface NostrSyncPanelHandle {
-  startSession: () => void;
-  enterViewMode: () => void;
-  refreshSession: () => void;
   syncNow: () => void;
 }
 
@@ -33,10 +30,31 @@ interface NostrSyncPanelProps {
   onRemoteSync?: (remoteHistory: HistoryEntry[]) => void;
 }
 
+function StatusBadge({ status }: { status: SessionStatus }) {
+  const config = {
+    active: { label: "ACTIVE", bg: "#22C55E20", color: "#22C55E" },
+    stale: { label: "STALE", bg: "#F59E0B20", color: "#F59E0B" },
+    idle: { label: "READY", bg: "#3B82F620", color: "#3B82F6" },
+    loading: { label: "LOADING", bg: "#6B728020", color: "#9CA3AF" },
+    needs_secret: { label: "LOCKED", bg: "#F59E0B20", color: "#F59E0B" },
+    needs_setup: { label: "SETUP", bg: "#A855F720", color: "#A855F7" },
+    invalid: { label: "ERROR", bg: "#EF444420", color: "#EF4444" },
+    no_npub: { label: "", bg: "transparent", color: "transparent" },
+  }[status];
+
+  if (!config.label) return null;
+
+  return (
+    <View style={[styles.badge, { backgroundColor: config.bg }]}>
+      <Text style={[styles.badgeText, { color: config.color }]}>{config.label}</Text>
+    </View>
+  );
+}
+
 export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelProps>(
   ({ encryptionKeys, npub, fingerprint, history, session, onHistoryLoaded, onRemoteSync }, ref) => {
     const [npubFingerprint, setNpubFingerprint] = useState<string | null>(null);
-    const [fingerprintStatus, setFingerprintStatus] = useState<string | null>(null);
+    const [showDetails, setShowDetails] = useState(false);
 
     const hasKeys = encryptionKeys !== null;
 
@@ -44,6 +62,7 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
       status,
       message,
       performInitialLoad,
+      performLoad,
       startSession,
       performSave,
     } = useNostrSync({
@@ -71,7 +90,6 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
     useEffect(() => {
       if (!fingerprint) {
         setNpubFingerprint(null);
-        setFingerprintStatus("No fingerprint");
         return;
       }
 
@@ -80,11 +98,9 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
         const raw = fingerprint.toUpperCase().slice(0, 16);
         const formatted = `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}-${raw.slice(12, 16)}`;
         setNpubFingerprint(formatted);
-        setFingerprintStatus(null);
       } catch (err) {
         console.error("Failed to format fingerprint", err);
         setNpubFingerprint(null);
-        setFingerprintStatus("Unable to format fingerprint");
       }
     }, [fingerprint]);
 
@@ -92,23 +108,18 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
       if (isBusy) return;
       if (!hasKeys) return;
       session.startTakeoverGrace();
-      session.setSessionStatus("active");
       startSession();
     };
 
-    const handleEnterView = () => {
-      if (isBusy) return;
-      session.setSessionStatus("idle");
-      session.clearSessionNotice();
-    };
-
-    const handleRefresh = () => {
+    const handleTakeOver = () => {
       if (isBusy) return;
       if (!hasKeys) return;
-      performInitialLoad();
+      session.startTakeoverGrace();
+      session.setSessionStatus("active");
+      performLoad(true); // true = follow remote
     };
 
-    const handleManualSave = () => {
+    const handleSyncNow = () => {
       if (isBusy) return;
       if (!hasKeys) return;
       void performSave(history).catch((err) => {
@@ -117,68 +128,125 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
     };
 
     useImperativeHandle(ref, () => ({
-      startSession: handleStartSession,
-      enterViewMode: handleEnterView,
-      refreshSession: handleRefresh,
-      syncNow: handleManualSave,
+      syncNow: handleSyncNow,
     }));
+
+    // Render action button based on session status
+    const renderActionButton = () => {
+      switch (session.sessionStatus) {
+        case "idle":
+          return (
+            <Pressable
+              style={[styles.button, styles.buttonPrimary, (isBusy || !hasKeys) && styles.buttonDisabled]}
+              onPress={handleStartSession}
+              disabled={isBusy || !hasKeys}
+            >
+              <Text style={styles.buttonText}>Start Session</Text>
+            </Pressable>
+          );
+
+        case "active":
+          return (
+            <View style={styles.activeContainer}>
+              <Pressable
+                style={[styles.button, styles.buttonPrimary, (isBusy || !hasKeys) && styles.buttonDisabled]}
+                onPress={handleSyncNow}
+                disabled={isBusy || !hasKeys}
+              >
+                <Text style={styles.buttonText}>{isBusy ? "Syncing..." : "Sync Now"}</Text>
+              </Pressable>
+              <Text style={styles.autoSaveText}>Auto-save enabled</Text>
+            </View>
+          );
+
+        case "stale":
+          return (
+            <Pressable
+              style={[styles.button, styles.buttonWarning, (isBusy || !hasKeys) && styles.buttonDisabled]}
+              onPress={handleTakeOver}
+              disabled={isBusy || !hasKeys}
+            >
+              <Text style={styles.buttonText}>Take Over Session</Text>
+            </Pressable>
+          );
+
+        case "loading":
+          return (
+            <View style={styles.loadingContainer}>
+              <Text style={styles.loadingText}>Loading...</Text>
+            </View>
+          );
+
+        default:
+          return null;
+      }
+    };
 
     return (
       <View style={styles.card}>
-        <Text style={styles.title}>Details</Text>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>npub Fingerprint</Text>
-          <Text style={styles.meta}>
-            {npubFingerprint ?? fingerprintStatus ?? "Computing..."}
-          </Text>
+        <View style={styles.headerRow}>
+          <Text style={styles.title}>Nostr Sync</Text>
+          <StatusBadge status={session.sessionStatus} />
         </View>
 
-        <View style={styles.row}>
-          <Pressable
-            style={[styles.button, (isBusy || !hasKeys) && styles.buttonDisabled]}
-            onPress={handleStartSession}
-            disabled={isBusy || !hasKeys}
-          >
-            <Text style={styles.buttonText}>
-              {session.sessionStatus === "active" ? "Publish Mode" : "Enter Publish Mode"}
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={[styles.button, isBusy && styles.buttonDisabled]}
-            onPress={handleEnterView}
-            disabled={isBusy}
-          >
-            <Text style={styles.buttonText}>View Mode</Text>
-          </Pressable>
-
-          {session.sessionStatus === "active" ? (
-            <Pressable
-              style={[styles.button, (isBusy || !hasKeys) && styles.buttonDisabled]}
-              onPress={handleManualSave}
-              disabled={isBusy || !hasKeys}
-            >
-              <Text style={styles.buttonText}>Sync Now</Text>
-            </Pressable>
-          ) : null}
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Nostr Sync</Text>
-          <Text style={styles.meta}>Relays: {RELAYS.length}</Text>
-          <Text style={styles.meta}>Session: {session.sessionStatus}</Text>
-          {!hasKeys && session.sessionStatus !== "loading" && (
-            <Text style={styles.notice}>Waiting for encryption keys...</Text>
-          )}
-        </View>
+        {renderActionButton()}
 
         {session.sessionNotice ? (
-          <Text style={styles.notice}>{session.sessionNotice}</Text>
+          <View style={[
+            styles.noticeContainer,
+            session.sessionStatus === "stale" && styles.noticeWarning,
+          ]}>
+            <Text style={[
+              styles.notice,
+              session.sessionStatus === "stale" && styles.noticeTextWarning,
+            ]}>
+              {session.sessionNotice}
+            </Text>
+          </View>
         ) : null}
-        {message ? <Text style={styles.message}>{message}</Text> : null}
 
-        <Text style={styles.meta}>Status: {status}</Text>
+        {message && status !== "idle" ? (
+          <Text style={[
+            styles.message,
+            status === "error" && styles.messageError,
+          ]}>
+            {message}
+          </Text>
+        ) : null}
+
+        {/* Collapsible details */}
+        <Pressable
+          style={styles.detailsToggle}
+          onPress={() => setShowDetails(!showDetails)}
+        >
+          <Text style={styles.detailsToggleText}>
+            {showDetails ? "▼" : "▶"} Details
+          </Text>
+        </Pressable>
+
+        {showDetails && (
+          <View style={styles.detailsContainer}>
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Fingerprint</Text>
+              <Text style={styles.detailValue}>{npubFingerprint ?? "..."}</Text>
+            </View>
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Relays</Text>
+              <Text style={styles.detailValue}>{RELAYS.length} connected</Text>
+            </View>
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Session ID</Text>
+              <Text style={styles.detailValueMono} numberOfLines={1}>
+                {session.localSessionId.slice(0, 12)}...
+              </Text>
+            </View>
+            <View style={styles.relayList}>
+              {RELAYS.map((relay) => (
+                <Text key={relay} style={styles.relayItem}>{relay}</Text>
+              ))}
+            </View>
+          </View>
+        )}
       </View>
     );
   }
@@ -191,48 +259,126 @@ const styles = StyleSheet.create({
     padding: 16,
     marginTop: 16,
   },
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
   title: {
     color: "#F9FAFB",
     fontSize: 16,
     fontWeight: "600",
   },
-  section: {
-    marginTop: 10,
+  badge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
   },
-  sectionTitle: {
-    color: "#E5E7EB",
-    fontSize: 14,
-    fontWeight: "600",
+  badgeText: {
+    fontSize: 10,
+    fontWeight: "700",
   },
-  meta: {
-    color: "#9CA3AF",
-    marginTop: 6,
+  button: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: "center",
   },
-  notice: {
-    color: "#FCA5A5",
-    marginTop: 6,
+  buttonPrimary: {
+    backgroundColor: "#2563EB",
   },
-  message: {
-    color: "#93C5FD",
-    marginTop: 6,
+  buttonWarning: {
+    backgroundColor: "#D97706",
   },
   buttonDisabled: {
     opacity: 0.6,
   },
-  row: {
-    flexDirection: "row",
-    gap: 8,
-    marginTop: 12,
-  },
-  button: {
-    backgroundColor: "#2563EB",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
   buttonText: {
     color: "#F9FAFB",
     fontWeight: "600",
+    fontSize: 14,
+  },
+  activeContainer: {
+    gap: 6,
+  },
+  autoSaveText: {
+    color: "#6B7280",
+    fontSize: 12,
+    textAlign: "center",
+  },
+  loadingContainer: {
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  loadingText: {
+    color: "#9CA3AF",
+    fontSize: 14,
+  },
+  noticeContainer: {
+    marginTop: 12,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: "#1F2937",
+  },
+  noticeWarning: {
+    backgroundColor: "#78350F",
+  },
+  notice: {
+    color: "#FCA5A5",
+    fontSize: 13,
+  },
+  noticeTextWarning: {
+    color: "#FCD34D",
+  },
+  message: {
+    color: "#93C5FD",
+    marginTop: 10,
+    fontSize: 13,
+  },
+  messageError: {
+    color: "#FCA5A5",
+  },
+  detailsToggle: {
+    marginTop: 16,
+    paddingVertical: 4,
+  },
+  detailsToggleText: {
+    color: "#6B7280",
+    fontSize: 13,
+  },
+  detailsContainer: {
+    marginTop: 8,
+    paddingLeft: 12,
+  },
+  detailRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 4,
+  },
+  detailLabel: {
+    color: "#6B7280",
+    fontSize: 12,
+  },
+  detailValue: {
+    color: "#9CA3AF",
+    fontSize: 12,
+  },
+  detailValueMono: {
+    color: "#9CA3AF",
+    fontSize: 11,
+    fontFamily: "monospace",
+    flex: 1,
+    textAlign: "right",
+  },
+  relayList: {
+    marginTop: 8,
+  },
+  relayItem: {
+    color: "#6B7280",
+    fontSize: 10,
+    fontFamily: "monospace",
+    paddingVertical: 2,
   },
 });
 

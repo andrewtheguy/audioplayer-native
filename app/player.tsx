@@ -1,4 +1,4 @@
-import { AudioPlayer, type AudioPlayerHandle } from "@/components/AudioPlayer";
+import { AudioPlayer } from "@/components/AudioPlayer";
 import type { SessionStatus } from "@/hooks/useNostrSession";
 import {
   clearAllIdentityData,
@@ -9,7 +9,7 @@ import {
 import { parseNpub } from "@/lib/nostr-crypto";
 import * as TrackPlayer from "@/services/HlsTrackPlayer";
 import { Redirect, useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -19,6 +19,27 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+function StatusBadge({ status }: { status: SessionStatus }) {
+  const config = {
+    active: { label: "ACTIVE", bg: "#22C55E20", color: "#22C55E" },
+    stale: { label: "STALE", bg: "#F59E0B20", color: "#F59E0B" },
+    idle: { label: "READY", bg: "#3B82F620", color: "#3B82F6" },
+    loading: { label: "LOADING", bg: "#6B728020", color: "#9CA3AF" },
+    needs_secret: { label: "LOCKED", bg: "#F59E0B20", color: "#F59E0B" },
+    needs_setup: { label: "SETUP", bg: "#A855F720", color: "#A855F7" },
+    invalid: { label: "ERROR", bg: "#EF444420", color: "#EF4444" },
+    no_npub: { label: "", bg: "transparent", color: "transparent" },
+  }[status];
+
+  if (!config.label) return null;
+
+  return (
+    <View style={[styles.statusBadge, { backgroundColor: config.bg }]}>
+      <Text style={[styles.statusBadgeText, { color: config.color }]}>{config.label}</Text>
+    </View>
+  );
+}
 
 interface IdentityData {
   npub: string;
@@ -32,7 +53,6 @@ export default function PlayerScreen() {
   const [identity, setIdentity] = useState<IdentityData | null>(null);
   const [loading, setLoading] = useState(true);
   const [logoutError, setLogoutError] = useState<string | null>(null);
-  const playerRef = useRef<AudioPlayerHandle | null>(null);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>("idle");
 
   useEffect(() => {
@@ -105,13 +125,6 @@ export default function PlayerScreen() {
     }
   };
 
-  const handlePublishMode = () => playerRef.current?.enterPublishMode();
-  const handleViewMode = () => playerRef.current?.enterViewMode();
-  const handleSyncNow = () => {
-    if (sessionStatus !== "active") return;
-    playerRef.current?.syncNow();
-  };
-
   if (loading) {
     return (
       <View style={styles.loading}>
@@ -127,25 +140,13 @@ export default function PlayerScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>audioplayer</Text>
-        <View style={styles.headerActions}>
-          <Pressable style={styles.sessionButton} onPress={handlePublishMode}>
-            <Text style={styles.sessionText}>Publish Mode</Text>
-          </Pressable>
-          <Pressable style={styles.sessionButton} onPress={handleViewMode}>
-            <Text style={styles.sessionText}>View Mode</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.sessionButton, sessionStatus !== "active" && styles.sessionButtonDisabled]}
-            onPress={handleSyncNow}
-            disabled={sessionStatus !== "active"}
-          >
-            <Text style={styles.sessionText}>Sync Now</Text>
-          </Pressable>
-          <Pressable style={styles.logout} onPress={() => void handleLogout()}>
-            <Text style={styles.logoutText}>Log out</Text>
-          </Pressable>
+        <View style={styles.headerLeft}>
+          <Text style={styles.headerTitle}>audioplayer</Text>
+          <StatusBadge status={sessionStatus} />
         </View>
+        <Pressable style={styles.logout} onPress={() => void handleLogout()}>
+          <Text style={styles.logoutText}>Log out</Text>
+        </Pressable>
       </View>
       <ScrollView contentContainerStyle={styles.content}>
         {logoutError ? (
@@ -162,7 +163,6 @@ export default function PlayerScreen() {
           </View>
         ) : null}
         <AudioPlayer
-          ref={playerRef}
           npub={identity.npub}
           pubkeyHex={identity.pubkeyHex}
           fingerprint={identity.fingerprint}
@@ -193,10 +193,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  headerActions: {
+  headerLeft: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 10,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  statusBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
   },
   content: {
     paddingBottom: 24,
@@ -243,19 +252,6 @@ const styles = StyleSheet.create({
     color: "#F9FAFB",
     fontSize: 18,
     fontWeight: "700",
-  },
-  sessionButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    backgroundColor: "#2563EB",
-  },
-  sessionButtonDisabled: {
-    opacity: 0.6,
-  },
-  sessionText: {
-    color: "#F9FAFB",
-    fontWeight: "600",
   },
   logout: {
     paddingHorizontal: 12,

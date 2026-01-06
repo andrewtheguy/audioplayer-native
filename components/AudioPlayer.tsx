@@ -28,9 +28,6 @@ import {
 } from "react-native";
 
 export interface AudioPlayerHandle {
-  enterPublishMode: () => void;
-  enterViewMode: () => void;
-  refreshSession: () => void;
   syncNow: () => void;
   getSessionStatus: () => SessionStatus;
 }
@@ -151,13 +148,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     }, [playbackState.state]);
 
     useImperativeHandle(ref, () => ({
-      enterPublishMode: () => syncRef.current?.startSession(),
-      enterViewMode: () => {
-        session.setSessionStatus("idle");
-        session.clearSessionNotice();
-        syncRef.current?.enterViewMode();
-      },
-      refreshSession: () => syncRef.current?.refreshSession(),
       syncNow: () => syncRef.current?.syncNow(),
       getSessionStatus: () => session.sessionStatus,
     }));
