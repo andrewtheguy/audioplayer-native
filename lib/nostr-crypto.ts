@@ -1,23 +1,33 @@
-import { getPublicKey, generateSecretKey } from "nostr-tools/pure";
-import { encrypt, decrypt, getConversationKey } from "nostr-tools/nip44";
-import { decode as decodeNip19 } from "nostr-tools/nip19";
+import type { HistoryEntry, HistoryPayload } from "@/lib/history";
+import { gcm } from "@noble/ciphers/aes.js";
 import { hkdf } from "@noble/hashes/hkdf";
 import { sha256 } from "@noble/hashes/sha256";
-import { utf8ToBytes } from "@noble/hashes/utils";
-import { toByteArray, fromByteArray } from "base64-js";
-import type { HistoryEntry, HistoryPayload } from "@/lib/history";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
+import { fromByteArray, toByteArray } from "base64-js";
+import { decode as decodeNip19 } from "nostr-tools/nip19";
+import { decrypt, encrypt, getConversationKey } from "nostr-tools/nip44";
+import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
 
 export interface NostrKeys {
   privateKey: Uint8Array;
   publicKey: string;
 }
 
-const SALT = "audioplayer-secret-nostr-v1";
+// Fixed salt for domain separation when deriving keys from player id
+const PLAYER_ID_SALT = "audioplayer-playerid-v1";
 
+// Secondary secret format: 11 random bytes + 1 checksum byte = 12 bytes → 16 base64 chars
 const SECRET_RANDOM_BYTES = 11;
 const SECRET_TOTAL_BYTES = 12;
 const SECRET_LENGTH = 16;
 
+// Player ID format: 32 random bytes → 43 URL-safe base64 chars (no padding)
+const PLAYER_ID_BYTES = 32;
+const PLAYER_ID_LENGTH = 43;
+
+/**
+ * CRC-8-CCITT lookup table (polynomial 0x07).
+ */
 const CRC8_TABLE = new Uint8Array([
   0x00, 0x07, 0x0e, 0x09, 0x1c, 0x1b, 0x12, 0x15,
   0x38, 0x3f, 0x36, 0x31, 0x24, 0x23, 0x2a, 0x2d,
@@ -71,20 +81,73 @@ function decodeUrlSafeBase64(str: string): Uint8Array | null {
   }
 }
 
-export function generateSecret(): string {
+function encodeUrlSafeBase64(bytes: Uint8Array): string {
+  return fromByteArray(bytes)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+// =============================================================================
+// Player ID Functions
+// =============================================================================
+
+/**
+ * Generate a new player id (32 random bytes, URL-safe base64 = 43 chars)
+ */
+export function generatePlayerId(): string {
+  const bytes = new Uint8Array(PLAYER_ID_BYTES);
+  crypto.getRandomValues(bytes);
+  return encodeUrlSafeBase64(bytes);
+}
+
+/**
+ * Generate a random session id (16 bytes = 32 hex chars)
+ * Used for multi-device coordination - simple format for interoperability
+ */
+export function generateSessionId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return bytesToHex(bytes);
+}
+
+/**
+ * Validate player id format (43 URL-safe base64 characters)
+ */
+export function isValidPlayerId(playerId: string): boolean {
+  if (
+    typeof playerId !== "string" ||
+    playerId.length !== PLAYER_ID_LENGTH ||
+    !/^[A-Za-z0-9_-]+$/.test(playerId)
+  ) {
+    return false;
+  }
+  // Verify it decodes to exactly 32 bytes
+  const bytes = decodeUrlSafeBase64(playerId);
+  return bytes !== null && bytes.length === PLAYER_ID_BYTES;
+}
+
+// =============================================================================
+// Secondary Secret Functions (for encrypting player id)
+// =============================================================================
+
+/**
+ * Generate a random URL-safe Base64 secondary secret with checksum.
+ */
+export function generateSecondarySecret(): string {
   const randomBytes = new Uint8Array(SECRET_RANDOM_BYTES);
   crypto.getRandomValues(randomBytes);
   const checksum = computeChecksum(randomBytes);
   const allBytes = new Uint8Array(SECRET_TOTAL_BYTES);
   allBytes.set(randomBytes);
   allBytes[SECRET_RANDOM_BYTES] = checksum;
-  return fromByteArray(allBytes)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+  return encodeUrlSafeBase64(allBytes);
 }
 
-export function isValidSecret(secret: string): boolean {
+/**
+ * Validate a secondary secret string has correct format and checksum.
+ */
+export function isValidSecondarySecret(secret: string): boolean {
   if (typeof secret !== "string" || secret.length !== SECRET_LENGTH) {
     return false;
   }
@@ -98,6 +161,127 @@ export function isValidSecret(secret: string): boolean {
   return storedChecksum === computedChecksum;
 }
 
+// Keep old name as alias for backward compatibility during migration
+export const isValidSecret = isValidSecondarySecret;
+export const generateSecret = generateSecondarySecret;
+
+/**
+ * Derive an AES-256 key from secondary secret using HKDF-SHA256.
+ * Uses @noble/hashes for pure JS implementation compatible with React Native.
+ * Must produce identical output to Web Crypto HKDF.
+ */
+function deriveAesKeyFromSecret(secret: string): Uint8Array {
+  const secretBytes = utf8ToBytes(secret);
+  const saltBytes = utf8ToBytes("audioplayer-secondary-secret-v1");
+  // HKDF with SHA-256, empty info, 32 bytes output (256 bits)
+  return hkdf(sha256, secretBytes, saltBytes, new Uint8Array(0), 32);
+}
+
+/**
+ * Encrypt data with secondary secret using AES-GCM.
+ * Uses @noble/ciphers for pure JS AES-GCM implementation.
+ */
+export function encryptWithSecondarySecret(
+  data: string,
+  secondarySecret: string
+): string {
+  if (!isValidSecondarySecret(secondarySecret)) {
+    throw new Error("Invalid secondary secret format");
+  }
+
+  const key = deriveAesKeyFromSecret(secondarySecret);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encoder = new TextEncoder();
+  const dataBytes = encoder.encode(data);
+
+  // Use @noble/ciphers AES-GCM
+  const aes = gcm(key, iv);
+  const ciphertext = aes.encrypt(dataBytes);
+
+  // Combine IV + ciphertext (ciphertext includes auth tag) and base64 encode
+  const combined = new Uint8Array(iv.length + ciphertext.length);
+  combined.set(iv);
+  combined.set(ciphertext, iv.length);
+
+  return fromByteArray(combined);
+}
+
+/**
+ * Decrypt data with secondary secret using AES-GCM.
+ * Uses @noble/ciphers for pure JS AES-GCM implementation.
+ */
+export function decryptWithSecondarySecret(
+  ciphertext: string,
+  secondarySecret: string
+): string {
+  if (!isValidSecondarySecret(secondarySecret)) {
+    throw new Error("Invalid secondary secret format");
+  }
+
+  const key = deriveAesKeyFromSecret(secondarySecret);
+
+  let combined: Uint8Array;
+  try {
+    combined = toByteArray(ciphertext);
+  } catch {
+    throw new Error("Invalid ciphertext format");
+  }
+
+  if (combined.length < 28) {
+    throw new Error("Ciphertext too short");
+  }
+
+  const iv = combined.slice(0, 12);
+  const encrypted = combined.slice(12);
+
+  try {
+    // Use @noble/ciphers AES-GCM (encrypted includes auth tag)
+    const aes = gcm(key, iv);
+    const decrypted = aes.decrypt(encrypted);
+    const decoder = new TextDecoder();
+    return decoder.decode(decrypted);
+  } catch {
+    throw new Error("Decryption failed - wrong secret?");
+  }
+}
+
+// =============================================================================
+// npub/nsec Functions
+// =============================================================================
+
+/**
+ * Parse npub string and return hex public key, or null if invalid
+ */
+export function parseNpub(npub: string): string | null {
+  if (!npub || !npub.startsWith("npub1")) {
+    return null;
+  }
+  try {
+    const decoded = decodeNip19(npub);
+    if (decoded.type !== "npub" || typeof decoded.data !== "string") {
+      return null;
+    }
+    const pubkeyHex = decoded.data;
+    if (pubkeyHex.length !== 64 || !/^[0-9a-fA-F]+$/.test(pubkeyHex)) {
+      return null;
+    }
+    return pubkeyHex;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Validate npub format
+ */
+export function isValidNpub(npub: string): boolean {
+  return parseNpub(npub) !== null;
+}
+
+// =============================================================================
+// Key Derivation from Player ID
+// =============================================================================
+
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     const err = new Error("Aborted");
@@ -106,6 +290,45 @@ function throwIfAborted(signal?: AbortSignal): void {
   }
 }
 
+/**
+ * Derive Nostr secp256k1 keypair from a player id using HKDF-SHA256.
+ * This keypair is used for NIP-44 encryption of history data.
+ */
+export async function deriveEncryptionKey(
+  playerId: string,
+  signal?: AbortSignal
+): Promise<NostrKeys> {
+  if (!playerId) {
+    throw new Error("Player ID cannot be empty");
+  }
+  if (!isValidPlayerId(playerId)) {
+    throw new Error("Invalid player ID format");
+  }
+  throwIfAborted(signal);
+
+  const playerIdBytes = decodeUrlSafeBase64(playerId);
+  if (!playerIdBytes) {
+    throw new Error("Failed to decode player ID");
+  }
+
+  const saltBytes = utf8ToBytes(PLAYER_ID_SALT);
+  const derivedBits = hkdf(sha256, playerIdBytes, saltBytes, new Uint8Array(0), 32);
+  throwIfAborted(signal);
+
+  const privateKey = new Uint8Array(derivedBits);
+
+  let publicKey: string;
+  try {
+    publicKey = getPublicKey(privateKey);
+  } catch {
+    throw new Error("Derived key is invalid. Please generate a new player ID.");
+  }
+
+  return { privateKey, publicKey };
+}
+
+// Legacy function for backward compatibility during migration
+// This derives keys directly from secret (old architecture)
 export async function deriveNostrKeys(
   secret: string,
   signal?: AbortSignal
@@ -113,13 +336,13 @@ export async function deriveNostrKeys(
   if (!secret) {
     throw new Error("Secret cannot be empty");
   }
-  if (!isValidSecret(secret)) {
+  if (!isValidSecondarySecret(secret)) {
     throw new Error("Invalid secret format or checksum");
   }
   throwIfAborted(signal);
 
   const secretBytes = utf8ToBytes(secret);
-  const saltBytes = utf8ToBytes(SALT);
+  const saltBytes = utf8ToBytes("audioplayer-secret-nostr-v1");
   const derivedBits = hkdf(sha256, secretBytes, saltBytes, new Uint8Array(0), 32);
   throwIfAborted(signal);
 
@@ -134,35 +357,9 @@ export async function deriveNostrKeys(
   return { privateKey, publicKey };
 }
 
-export function encryptHistory(
-  data: HistoryEntry[],
-  recipientPublicKey: string,
-  sessionId?: string
-): { ciphertext: string; ephemeralPubKey: string } {
-  if (
-    typeof recipientPublicKey !== "string" ||
-    recipientPublicKey.length !== 64 ||
-    !/^[0-9a-fA-F]+$/.test(recipientPublicKey)
-  ) {
-    throw new Error("Invalid recipient public key.");
-  }
-
-  const ephemeralPrivKey = generateSecretKey();
-  const ephemeralPubKey = getPublicKey(ephemeralPrivKey);
-
-  const payload: HistoryPayload = {
-    history: data,
-    timestamp: Date.now(),
-    sessionId,
-  };
-
-  const conversationKey = getConversationKey(ephemeralPrivKey, recipientPublicKey);
-  const plaintext = JSON.stringify(payload);
-  const ciphertext = encrypt(plaintext, conversationKey);
-  ephemeralPrivKey.fill(0);
-
-  return { ciphertext, ephemeralPubKey };
-}
+// =============================================================================
+// History Encryption (using player id derived key)
+// =============================================================================
 
 function isValidHistoryEntry(value: unknown): value is HistoryEntry {
   if (typeof value !== "object" || value === null) return false;
@@ -188,7 +385,7 @@ function isValidHistoryEntry(value: unknown): value is HistoryEntry {
     (typeof entry.gain === "number" &&
       Number.isFinite(entry.gain) &&
       entry.gain >= 0 &&
-      entry.gain <= 1);
+      entry.gain <= 2);
   return (
     typeof entry.url === "string" &&
     (entry.title === undefined || typeof entry.title === "string") &&
@@ -250,6 +447,52 @@ function validateHistoryPayload(data: unknown): HistoryPayload {
   };
 }
 
+/**
+ * Encrypt history data using NIP-44 with ephemeral sender key
+ * Returns encrypted payload and ephemeral public key for decryption
+ *
+ * @param data - History entries to encrypt
+ * @param recipientPublicKey - Public key derived from player id
+ * @param sessionId - Optional session ID for multi-device coordination
+ */
+export function encryptHistory(
+  data: HistoryEntry[],
+  recipientPublicKey: string,
+  sessionId?: string
+): { ciphertext: string; ephemeralPubKey: string } {
+  if (
+    typeof recipientPublicKey !== "string" ||
+    recipientPublicKey.length !== 64 ||
+    !/^[0-9a-fA-F]+$/.test(recipientPublicKey)
+  ) {
+    throw new Error("Invalid recipient public key.");
+  }
+
+  const ephemeralPrivKey = generateSecretKey();
+  const ephemeralPubKey = getPublicKey(ephemeralPrivKey);
+
+  const payload: HistoryPayload = {
+    history: data,
+    timestamp: Date.now(),
+    sessionId,
+  };
+
+  const conversationKey = getConversationKey(ephemeralPrivKey, recipientPublicKey);
+  const plaintext = JSON.stringify(payload);
+  const ciphertext = encrypt(plaintext, conversationKey);
+  ephemeralPrivKey.fill(0);
+
+  return { ciphertext, ephemeralPubKey };
+}
+
+/**
+ * Decrypt history data using NIP-44
+ * Validates decryption, JSON parsing, and data structure
+ *
+ * @param ciphertext - Encrypted data
+ * @param senderPublicKey - Ephemeral public key from encryption
+ * @param recipientPrivateKey - Private key derived from player id
+ */
 export function decryptHistory(
   ciphertext: string,
   senderPublicKey: string,
@@ -276,7 +519,7 @@ export function decryptHistory(
     plaintext = decrypt(ciphertext, conversationKey);
   } catch (err) {
     throw new Error(
-      `Decryption failed: ${err instanceof Error ? err.message : "Unknown error"}. Wrong Secret?`
+      `Decryption failed: ${err instanceof Error ? err.message : "Unknown error"}. Wrong player ID?`
     );
   }
 

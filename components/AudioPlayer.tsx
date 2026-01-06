@@ -28,15 +28,11 @@ import {
 } from "react-native";
 
 export interface AudioPlayerHandle {
-  enterPublishMode: () => void;
-  enterViewMode: () => void;
-  refreshSession: () => void;
   syncNow: () => void;
   getSessionStatus: () => SessionStatus;
 }
 
 interface AudioPlayerProps {
-  secret: string;
   onSessionStatusChange?: (status: SessionStatus) => void;
 }
 
@@ -54,7 +50,7 @@ function formatTime(seconds: number | null): string {
 const SAVE_POSITION_INTERVAL_MS = 5000;
 
 export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
-  ({ secret, onSessionStatusChange }, ref) => {
+  ({ onSessionStatusChange }, ref) => {
     const [history, setHistory] = useState<HistoryEntry[]>([]);
     const [url, setUrl] = useState("");
     const [title, setTitle] = useState("");
@@ -97,9 +93,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const currentTitleRef = useRef<string | null>(null);
     const lastAutoSaveAtRef = useRef(0);
     const isLiveStreamRef = useRef(false);
+    const volumeRef = useRef(100);
 
     const session = useNostrSession({
-      secret,
       onSessionStatusChange,
     });
     const isViewOnly = session.sessionStatus !== "active";
@@ -114,6 +110,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     useEffect(() => {
       isLiveStreamRef.current = isLiveStream;
     }, [isLiveStream]);
+
+    useEffect(() => {
+      volumeRef.current = volume;
+    }, [volume]);
 
     // Update isLiveStream and probeDuration from VLC stream-ready event
     useEffect(() => {
@@ -149,13 +149,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     }, [playbackState.state]);
 
     useImperativeHandle(ref, () => ({
-      enterPublishMode: () => syncRef.current?.startSession(),
-      enterViewMode: () => {
-        session.setSessionStatus("idle");
-        session.clearSessionNotice();
-        syncRef.current?.enterViewMode();
-      },
-      refreshSession: () => syncRef.current?.refreshSession(),
       syncNow: () => syncRef.current?.syncNow(),
       getSessionStatus: () => session.sessionStatus,
     }));
@@ -240,14 +233,16 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
         const pos = Number.isFinite(positionToSave) ? (positionToSave as number) : position;
         const now = new Date().toISOString();
-        const entry: HistoryEntry = {
-          url: currentUrlRef.current,
-          title: currentTitleRef.current ?? undefined,
-          lastPlayedAt: now,
-          position: pos,
-        };
 
         setHistory((prev) => {
+          const entry: HistoryEntry = {
+            url: currentUrlRef.current!,
+            title: currentTitleRef.current ?? undefined,
+            lastPlayedAt: now,
+            position: pos,
+            gain: volumeRef.current / 100,
+          };
+
           const existingIndex = prev.findIndex((item) => item.url === entry.url);
           let next: HistoryEntry[];
           if (existingIndex >= 0) {
@@ -277,7 +272,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       async (
         urlToLoad: string,
         resolvedTitle?: string,
-        options?: { skipInitialSave?: boolean; startPosition?: number | null; autoPlay?: boolean }
+        options?: { skipInitialSave?: boolean; startPosition?: number | null; autoPlay?: boolean; volume?: number }
       ) => {
         if (!urlToLoad) return;
         setLoading(true);
@@ -306,6 +301,11 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               autoplay: options?.autoPlay ?? false,
             }
           );
+
+          // Apply volume after track is loaded
+          if (options?.volume !== undefined) {
+            await TrackPlayer.setVolume(options.volume);
+          }
 
           currentUrlRef.current = urlToLoad;
           currentTitleRef.current = resolvedTitle ?? null;
@@ -342,6 +342,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         if (!entry) return;
         if (isViewOnly && !options?.allowViewOnly) return;
 
+        // Load saved gain value (convert gain 1.0-2.0 to volume 100-200, clamped)
+        const savedVolume = Math.max(100, Math.min(200, Math.round((entry.gain ?? 1) * 100)));
+        setVolumeState(savedVolume);
+
         if (isViewOnly) {
           applyHistoryDisplay(entry);
           setViewOnlyPosition(Number.isFinite(entry.position) ? Math.max(0, entry.position) : 0);
@@ -350,11 +354,12 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
         const start = Number.isFinite(entry.position) ? Math.max(0, entry.position) : 0;
 
-        // Native handles seeking to start position and autoplay
+        // Native handles seeking to start position and autoplay, volume applied after track loads
         void loadUrl(entry.url, entry.title, {
           skipInitialSave: true,
           startPosition: start,
           autoPlay: options?.autoPlay ?? false,
+          volume: savedVolume,
         });
       },
       [applyHistoryDisplay, isViewOnly, loadUrl]
@@ -369,6 +374,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         setHistory(stored);
         if (stored[0]) {
           applyHistoryDisplay(stored[0]);
+          // Load saved gain value (clamped to 100-200)
+          const savedVolume = Math.max(100, Math.min(200, Math.round((stored[0].gain ?? 1) * 100)));
+          setVolumeState(savedVolume);
         }
         if (session.sessionStatus !== "active" && stored[0]) {
           setViewOnlyPosition(
@@ -466,7 +474,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         const entry = history[0];
         if (entry) {
           const start = Number.isFinite(entry.position) ? Math.max(0, entry.position) : 0;
-          void loadUrl(entry.url, entry.title, { skipInitialSave: true, startPosition: start });
+          const entryVolume = Math.max(100, Math.min(200, Math.round((entry.gain ?? 1) * 100)));
+          setVolumeState(entryVolume);
+          void loadUrl(entry.url, entry.title, { skipInitialSave: true, startPosition: start, volume: entryVolume });
         } else if (currentUrlRef.current) {
           void loadUrl(currentUrlRef.current, currentTitleRef.current ?? undefined, {
             skipInitialSave: true,
@@ -624,9 +634,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
           <NostrSyncPanel
             ref={syncRef}
-            secret={secret}
+            encryptionKeys={session.encryptionKeys}
             history={history}
             session={session}
+            npub={session.npub}
             onHistoryLoaded={(merged) => {
               setHistory(merged);
               void saveHistory(merged);
@@ -879,9 +890,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
         <NostrSyncPanel
           ref={syncRef}
-          secret={secret}
+          encryptionKeys={session.encryptionKeys}
           history={history}
           session={session}
+          npub={session.npub}
           onHistoryLoaded={(merged) => {
             setHistory(merged);
             void saveHistory(merged);

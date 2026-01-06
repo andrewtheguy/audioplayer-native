@@ -1,10 +1,8 @@
 import type { SessionStatus } from "@/hooks/useNostrSession";
 import { useNostrSync } from "@/hooks/useNostrSync";
 import type { HistoryEntry } from "@/lib/history";
-import { isValidSecret } from "@/lib/nostr-crypto";
+import type { NostrKeys } from "@/lib/nostr-crypto";
 import { RELAYS } from "@/lib/nostr-sync";
-import { sha256 } from "@noble/hashes/sha256";
-import { bytesToHex } from "@noble/hashes/utils";
 import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
@@ -12,176 +10,231 @@ interface NostrSessionApi {
   sessionStatus: SessionStatus;
   sessionNotice: string | null;
   localSessionId: string;
+  ignoreRemoteUntil: number;
   setSessionStatus: (status: SessionStatus) => void;
   clearSessionNotice: () => void;
+  startTakeoverGrace: () => void;
 }
 
 export interface NostrSyncPanelHandle {
-  startSession: () => void;
-  enterViewMode: () => void;
-  refreshSession: () => void;
   syncNow: () => void;
 }
 
 interface NostrSyncPanelProps {
-  secret: string;
+  encryptionKeys: NostrKeys | null;
   history: HistoryEntry[];
   session: NostrSessionApi;
+  npub: string | null;
   onHistoryLoaded: (merged: HistoryEntry[]) => void;
   onRemoteSync?: (remoteHistory: HistoryEntry[]) => void;
 }
 
-export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelProps>(
-  ({ secret, history, session, onHistoryLoaded, onRemoteSync }, ref) => {
-  const [fingerprint, setFingerprint] = useState<string | null>(null);
-  const [fingerprintStatus, setFingerprintStatus] = useState<string | null>(null);
-
-  const {
-    status,
-    message,
-    performInitialLoad,
-    startSession,
-    performSave,
-  } = useNostrSync({
-    history,
-    secret,
-    sessionStatus: session.sessionStatus,
-    setSessionStatus: session.setSessionStatus,
-    sessionId: session.localSessionId,
-    onHistoryLoaded,
-    onRemoteSync,
-  });
-
-  const secretValid = isValidSecret(secret);
-  const isBusy = status === "loading" || status === "saving";
-
-  useEffect(() => {
-    if (!secret || !secretValid) return;
-    if (session.sessionStatus === "idle" || session.sessionStatus === "unknown") {
-      performInitialLoad(secret);
-    }
-  }, [secret, secretValid, session.sessionStatus, performInitialLoad]);
-
-  useEffect(() => {
-    if (!secret) {
-      setFingerprint(null);
-      setFingerprintStatus("No secret provided");
-      return;
-    }
-    if (!secretValid) {
-      setFingerprint(null);
-      setFingerprintStatus("Invalid secret");
-      return;
-    }
-
-    try {
-      const hash = sha256(new TextEncoder().encode(secret));
-      const hex = bytesToHex(hash).toUpperCase();
-      const raw = hex.slice(0, 16);
-      const formatted = `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}-${raw.slice(12, 16)}`;
-      setFingerprint(formatted);
-      setFingerprintStatus(null);
-    } catch (err) {
-      console.error("Failed to compute secret fingerprint", err);
-      setFingerprint(null);
-      setFingerprintStatus("Unable to compute fingerprint");
-    }
-  }, [secret, secretValid]);
-
-  const handleStartSession = () => {
-    if (isBusy) return;
-    if (!secretValid) return;
-    session.setSessionStatus("active");
-    startSession(secret);
+function StatusBadge({ status }: { status: SessionStatus }) {
+  const statusConfig: Partial<Record<SessionStatus, { label: string; bg: string; color: string }>> = {
+    active: { label: "ACTIVE", bg: "#22C55E20", color: "#22C55E" },
+    stale: { label: "STALE", bg: "#F59E0B20", color: "#F59E0B" },
+    idle: { label: "READY", bg: "#3B82F620", color: "#3B82F6" },
+    loading: { label: "LOADING", bg: "#6B728020", color: "#9CA3AF" },
+    needs_secret: { label: "LOCKED", bg: "#F59E0B20", color: "#F59E0B" },
+    needs_setup: { label: "SETUP", bg: "#A855F720", color: "#A855F7" },
+    invalid: { label: "ERROR", bg: "#EF444420", color: "#EF4444" },
+    no_npub: { label: "", bg: "transparent", color: "transparent" },
   };
 
-  const handleEnterView = () => {
-    if (isBusy) return;
-    session.setSessionStatus("idle");
-    session.clearSessionNotice();
-  };
-
-  const handleRefresh = () => {
-    if (isBusy) return;
-    if (!secretValid) return;
-    performInitialLoad(secret);
-  };
-
-  const handleManualSave = () => {
-    if (isBusy) return;
-    if (!secretValid) return;
-    void performSave(secret, history).catch((err) => {
-      console.error("Failed to save history:", err);
-    });
-  };
-
-  useImperativeHandle(ref, () => ({
-    startSession: handleStartSession,
-    enterViewMode: handleEnterView,
-    refreshSession: handleRefresh,
-    syncNow: handleManualSave,
-  }));
+  const config = statusConfig[status];
+  if (!config || !config.label) return null;
 
   return (
-    <View style={styles.card}>
-      <Text style={styles.title}>Details</Text>
+    <View style={[styles.badge, { backgroundColor: config.bg }]}>
+      <Text style={[styles.badgeText, { color: config.color }]}>{config.label}</Text>
+    </View>
+  );
+}
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Secret Fingerprint</Text>
-        <Text style={styles.meta}>
-          {fingerprint ?? fingerprintStatus ?? "Computing..."}
-        </Text>
-      </View>
+export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelProps>(
+  ({ encryptionKeys, history, session, npub, onHistoryLoaded, onRemoteSync }, ref) => {
+    const [showDetails, setShowDetails] = useState(false);
 
-      <View style={styles.row}>
+    const hasKeys = encryptionKeys !== null;
+
+    const {
+      status,
+      message,
+      performInitialLoad,
+      performLoad,
+      startSession,
+      performSave,
+    } = useNostrSync({
+      history,
+      encryptionKeys,
+      sessionStatus: session.sessionStatus,
+      setSessionStatus: session.setSessionStatus,
+      sessionId: session.localSessionId,
+      ignoreRemoteUntil: session.ignoreRemoteUntil,
+      onHistoryLoaded,
+      onRemoteSync,
+    });
+
+    const isBusy = status === "loading" || status === "saving";
+
+    // Initial load when encryption keys are available
+    useEffect(() => {
+      if (!hasKeys) return;
+      if (session.sessionStatus === "idle") {
+        performInitialLoad();
+      }
+    }, [hasKeys, session.sessionStatus, performInitialLoad]);
+
+    const handleStartSession = () => {
+      if (isBusy) return;
+      if (!hasKeys) return;
+      session.startTakeoverGrace();
+      startSession();
+    };
+
+    const handleTakeOver = () => {
+      if (isBusy) return;
+      if (!hasKeys) return;
+      session.startTakeoverGrace();
+      performLoad(true); // true = isTakeOver, sets status to active on success
+    };
+
+    const handleSyncNow = () => {
+      if (isBusy) return;
+      if (!hasKeys) return;
+      void performSave(history).catch((err) => {
+        console.error("Failed to save history:", err);
+      });
+    };
+
+    useImperativeHandle(ref, () => ({
+      syncNow: handleSyncNow,
+    }));
+
+    // Render action button based on session status
+    const renderActionButton = () => {
+      switch (session.sessionStatus) {
+        case "idle":
+          return (
+            <Pressable
+              style={[styles.button, styles.buttonPrimary, (isBusy || !hasKeys) && styles.buttonDisabled]}
+              onPress={handleStartSession}
+              disabled={isBusy || !hasKeys}
+            >
+              <Text style={styles.buttonText}>Start Session</Text>
+            </Pressable>
+          );
+
+        case "active":
+          return (
+            <View style={styles.activeContainer}>
+              <Pressable
+                style={[styles.button, styles.buttonPrimary, (isBusy || !hasKeys) && styles.buttonDisabled]}
+                onPress={handleSyncNow}
+                disabled={isBusy || !hasKeys}
+              >
+                <Text style={styles.buttonText}>{isBusy ? "Syncing..." : "Sync Now"}</Text>
+              </Pressable>
+              <Text style={styles.autoSaveText}>Auto-save enabled</Text>
+            </View>
+          );
+
+        case "stale":
+          return (
+            <Pressable
+              style={[styles.button, styles.buttonWarning, (isBusy || !hasKeys) && styles.buttonDisabled]}
+              onPress={handleTakeOver}
+              disabled={isBusy || !hasKeys}
+            >
+              <Text style={styles.buttonText}>Take Over Session</Text>
+            </Pressable>
+          );
+
+        case "loading":
+          return (
+            <View style={styles.loadingContainer}>
+              <Text style={styles.loadingText}>Loading...</Text>
+            </View>
+          );
+
+        default:
+          return null;
+      }
+    };
+
+    return (
+      <View style={styles.card}>
+        <View style={styles.headerRow}>
+          <Text style={styles.title}>Nostr Sync</Text>
+          <StatusBadge status={session.sessionStatus} />
+        </View>
+
+        {renderActionButton()}
+
+        {session.sessionNotice ? (
+          <View style={[
+            styles.noticeContainer,
+            session.sessionStatus === "stale" && styles.noticeWarning,
+          ]}>
+            <Text style={[
+              styles.notice,
+              session.sessionStatus === "stale" && styles.noticeTextWarning,
+            ]}>
+              {session.sessionNotice}
+            </Text>
+          </View>
+        ) : null}
+
+        {message && status !== "idle" ? (
+          <Text style={[
+            styles.message,
+            status === "error" && styles.messageError,
+          ]}>
+            {message}
+          </Text>
+        ) : null}
+
+        {/* Collapsible details */}
         <Pressable
-          style={[styles.button, isBusy && styles.buttonDisabled]}
-          onPress={handleStartSession}
-          disabled={isBusy}
+          style={styles.detailsToggle}
+          onPress={() => setShowDetails(!showDetails)}
         >
-          <Text style={styles.buttonText}>
-            {session.sessionStatus === "active" ? "Publish Mode" : "Enter Publish Mode"}
+          <Text style={styles.detailsToggleText}>
+            {showDetails ? "▼" : "▶"} Details
           </Text>
         </Pressable>
 
-        <Pressable
-          style={[styles.button, isBusy && styles.buttonDisabled]}
-          onPress={handleEnterView}
-          disabled={isBusy}
-        >
-          <Text style={styles.buttonText}>View Mode</Text>
-        </Pressable>
-
-        {session.sessionStatus === "active" ? (
-          <Pressable
-            style={[styles.button, isBusy && styles.buttonDisabled]}
-            onPress={handleManualSave}
-            disabled={isBusy}
-          >
-            <Text style={styles.buttonText}>Sync Now</Text>
-          </Pressable>
-        ) : null}
+        {showDetails && (
+          <View style={styles.detailsContainer}>
+            {npub && (
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>npub</Text>
+                <Text style={styles.detailValueMono} numberOfLines={1}>
+                  {npub.slice(0, 12)}...{npub.slice(-8)}
+                </Text>
+              </View>
+            )}
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Relays</Text>
+              <Text style={styles.detailValue}>{RELAYS.length} connected</Text>
+            </View>
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Session ID</Text>
+              <Text style={styles.detailValueMono} numberOfLines={1}>
+                {session.localSessionId.slice(0, 12)}...
+              </Text>
+            </View>
+            <View style={styles.relayList}>
+              {RELAYS.map((relay) => (
+                <Text key={relay} style={styles.relayItem}>{relay}</Text>
+              ))}
+            </View>
+          </View>
+        )}
       </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Nostr Sync</Text>
-        <Text style={styles.meta}>Relays: {RELAYS.length}</Text>
-        <Text style={styles.meta}>Session: {session.sessionStatus}</Text>
-      </View>
-
-      {session.sessionNotice ? (
-        <Text style={styles.notice}>{session.sessionNotice}</Text>
-      ) : null}
-      {message ? <Text style={styles.message}>{message}</Text> : null}
-
-      {!secretValid ? (
-        <Text style={styles.notice}>Invalid secret. Please log in again.</Text>
-      ) : null}
-
-      <Text style={styles.meta}>Status: {status}</Text>
-    </View>
-  );
-});
+    );
+  }
+);
 
 const styles = StyleSheet.create({
   card: {
@@ -190,48 +243,126 @@ const styles = StyleSheet.create({
     padding: 16,
     marginTop: 16,
   },
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
   title: {
     color: "#F9FAFB",
     fontSize: 16,
     fontWeight: "600",
   },
-  section: {
-    marginTop: 10,
+  badge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
   },
-  sectionTitle: {
-    color: "#E5E7EB",
-    fontSize: 14,
-    fontWeight: "600",
+  badgeText: {
+    fontSize: 10,
+    fontWeight: "700",
   },
-  meta: {
-    color: "#9CA3AF",
-    marginTop: 6,
+  button: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: "center",
   },
-  notice: {
-    color: "#FCA5A5",
-    marginTop: 6,
+  buttonPrimary: {
+    backgroundColor: "#2563EB",
   },
-  message: {
-    color: "#93C5FD",
-    marginTop: 6,
+  buttonWarning: {
+    backgroundColor: "#D97706",
   },
   buttonDisabled: {
     opacity: 0.6,
   },
-  row: {
-    flexDirection: "row",
-    gap: 8,
-    marginTop: 12,
-  },
-  button: {
-    backgroundColor: "#2563EB",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
   buttonText: {
     color: "#F9FAFB",
     fontWeight: "600",
+    fontSize: 14,
+  },
+  activeContainer: {
+    gap: 6,
+  },
+  autoSaveText: {
+    color: "#6B7280",
+    fontSize: 12,
+    textAlign: "center",
+  },
+  loadingContainer: {
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  loadingText: {
+    color: "#9CA3AF",
+    fontSize: 14,
+  },
+  noticeContainer: {
+    marginTop: 12,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: "#1F2937",
+  },
+  noticeWarning: {
+    backgroundColor: "#78350F",
+  },
+  notice: {
+    color: "#FCA5A5",
+    fontSize: 13,
+  },
+  noticeTextWarning: {
+    color: "#FCD34D",
+  },
+  message: {
+    color: "#93C5FD",
+    marginTop: 10,
+    fontSize: 13,
+  },
+  messageError: {
+    color: "#FCA5A5",
+  },
+  detailsToggle: {
+    marginTop: 16,
+    paddingVertical: 4,
+  },
+  detailsToggleText: {
+    color: "#6B7280",
+    fontSize: 13,
+  },
+  detailsContainer: {
+    marginTop: 8,
+    paddingLeft: 12,
+  },
+  detailRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 4,
+  },
+  detailLabel: {
+    color: "#6B7280",
+    fontSize: 12,
+  },
+  detailValue: {
+    color: "#9CA3AF",
+    fontSize: 12,
+  },
+  detailValueMono: {
+    color: "#9CA3AF",
+    fontSize: 11,
+    fontFamily: "monospace",
+    flex: 1,
+    textAlign: "right",
+  },
+  relayList: {
+    marginTop: 8,
+  },
+  relayItem: {
+    color: "#6B7280",
+    fontSize: 10,
+    fontFamily: "monospace",
+    paddingVertical: 2,
   },
 });
 

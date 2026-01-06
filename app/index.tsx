@@ -1,19 +1,48 @@
+import { getSavedNpub, getSecondarySecret } from "@/lib/identity";
+import { parseNpub } from "@/lib/nostr-crypto";
+import { Redirect } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
-import { Redirect } from "expo-router";
-import { getSavedSessionSecret } from "@/lib/history";
 
 export default function Index() {
-  const [secret, setSecret] = useState<string | null>(null);
+  const [hasIdentity, setHasIdentity] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const stored = await getSavedSessionSecret();
-      if (!mounted) return;
-      setSecret(stored || null);
-      setLoading(false);
+      try {
+        const npub = await getSavedNpub();
+        if (!npub) {
+          if (mounted) {
+            setHasIdentity(false);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const pubkeyHex = parseNpub(npub);
+        if (!pubkeyHex) {
+          if (mounted) {
+            setHasIdentity(false);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const secondarySecret = await getSecondarySecret();
+
+        if (mounted) {
+          setHasIdentity(Boolean(secondarySecret));
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error("Failed to check identity:", err);
+        if (mounted) {
+          setHasIdentity(false);
+          setLoading(false);
+        }
+      }
     })();
     return () => {
       mounted = false;
@@ -28,7 +57,7 @@ export default function Index() {
     );
   }
 
-  if (secret) {
+  if (hasIdentity) {
     return <Redirect href="/player" />;
   }
 

@@ -1,39 +1,100 @@
-import { AudioPlayer, type AudioPlayerHandle } from "@/components/AudioPlayer";
+import { AudioPlayer } from "@/components/AudioPlayer";
 import type { SessionStatus } from "@/hooks/useNostrSession";
-import { clearSessionSecret, getSavedSessionSecret } from "@/lib/history";
+import {
+  clearAllIdentityData,
+  getSavedNpub,
+  getSecondarySecret,
+} from "@/lib/identity";
+import { parseNpub } from "@/lib/nostr-crypto";
 import * as TrackPlayer from "@/services/HlsTrackPlayer";
 import { Redirect, useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+function StatusBadge({ status }: { status: SessionStatus }) {
+  const config = {
+    active: { label: "ACTIVE", bg: "#22C55E20", color: "#22C55E" },
+    stale: { label: "STALE", bg: "#F59E0B20", color: "#F59E0B" },
+    idle: { label: "READY", bg: "#3B82F620", color: "#3B82F6" },
+    loading: { label: "LOADING", bg: "#6B728020", color: "#9CA3AF" },
+    needs_secret: { label: "LOCKED", bg: "#F59E0B20", color: "#F59E0B" },
+    needs_setup: { label: "SETUP", bg: "#A855F720", color: "#A855F7" },
+    invalid: { label: "ERROR", bg: "#EF444420", color: "#EF4444" },
+    no_npub: { label: "", bg: "transparent", color: "transparent" },
+  }[status];
+
+  if (!config) return null;
+  if (!config.label) return null;
+
+  return (
+    <View style={[styles.statusBadge, { backgroundColor: config.bg }]}>
+      <Text style={[styles.statusBadgeText, { color: config.color }]}>{config.label}</Text>
+    </View>
+  );
+}
+
+interface IdentityData {
+  npub: string;
+  pubkeyHex: string;
+}
+
 export default function PlayerScreen() {
   const router = useRouter();
-  const [secret, setSecret] = useState<string | null>(null);
+  const [identity, setIdentity] = useState<IdentityData | null>(null);
   const [loading, setLoading] = useState(true);
   const [logoutError, setLogoutError] = useState<string | null>(null);
-  const playerRef = useRef<AudioPlayerHandle | null>(null);
-  const [sessionStatus, setSessionStatus] = useState<SessionStatus>("unknown");
+  const [sessionStatus, setSessionStatus] = useState<SessionStatus>("idle");
 
   useEffect(() => {
     let mounted = true;
     (async () => {
-      let stored: string | null = null;
       try {
-        stored = await getSavedSessionSecret();
+        const npub = await getSavedNpub();
+        if (!npub) {
+          if (mounted) {
+            setIdentity(null);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const pubkeyHex = parseNpub(npub);
+        if (!pubkeyHex) {
+          if (mounted) {
+            setIdentity(null);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const secondarySecret = await getSecondarySecret();
+
+        if (!secondarySecret) {
+          if (mounted) {
+            setIdentity(null);
+            setLoading(false);
+          }
+          return;
+        }
+
+        if (mounted) {
+          setIdentity({ npub, pubkeyHex });
+          setLoading(false);
+        }
       } catch (error) {
-        console.error("Failed to load session secret.", error);
-      } finally {
-        if (!mounted) return;
-        setSecret(stored || null);
-        setLoading(false);
+        console.error("Failed to load identity.", error);
+        if (mounted) {
+          setIdentity(null);
+          setLoading(false);
+        }
       }
     })();
     return () => {
@@ -52,22 +113,13 @@ export default function PlayerScreen() {
         // Ignore teardown failures on logout
       }
 
-      await clearSessionSecret();
+      await clearAllIdentityData();
       router.replace("/login");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error("Failed to clear session secret.", error);
-      setLogoutError(message || "Failed to clear session secret.");
+      console.error("Failed to clear identity data.", error);
+      setLogoutError(message || "Failed to clear identity data.");
     }
-  };
-
-
-
-  const handlePublishMode = () => playerRef.current?.enterPublishMode();
-  const handleViewMode = () => playerRef.current?.enterViewMode();
-  const handleSyncNow = () => {
-    if (sessionStatus !== "active") return;
-    playerRef.current?.syncNow();
   };
 
   if (loading) {
@@ -78,32 +130,20 @@ export default function PlayerScreen() {
     );
   }
 
-  if (!secret) {
+  if (!identity) {
     return <Redirect href="/login" />;
   }
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>audioplayer</Text>
-        <View style={styles.headerActions}>
-          <Pressable style={styles.sessionButton} onPress={handlePublishMode}>
-            <Text style={styles.sessionText}>Publish Mode</Text>
-          </Pressable>
-          <Pressable style={styles.sessionButton} onPress={handleViewMode}>
-            <Text style={styles.sessionText}>View Mode</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.sessionButton, sessionStatus !== "active" && styles.sessionButtonDisabled]}
-            onPress={handleSyncNow}
-            disabled={sessionStatus !== "active"}
-          >
-            <Text style={styles.sessionText}>Sync Now</Text>
-          </Pressable>
-          <Pressable style={styles.logout} onPress={() => void handleLogout()}>
-            <Text style={styles.logoutText}>Log out</Text>
-          </Pressable>
+        <View style={styles.headerLeft}>
+          <Text style={styles.headerTitle}>audioplayer</Text>
+          <StatusBadge status={sessionStatus} />
         </View>
+        <Pressable style={styles.logout} onPress={() => void handleLogout()}>
+          <Text style={styles.logoutText}>Log out</Text>
+        </Pressable>
       </View>
       <ScrollView contentContainerStyle={styles.content}>
         {logoutError ? (
@@ -120,8 +160,6 @@ export default function PlayerScreen() {
           </View>
         ) : null}
         <AudioPlayer
-          ref={playerRef}
-          secret={secret}
           onSessionStatusChange={setSessionStatus}
         />
       </ScrollView>
@@ -148,10 +186,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  headerActions: {
+  headerLeft: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 10,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  statusBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
   },
   content: {
     paddingBottom: 24,
@@ -198,19 +245,6 @@ const styles = StyleSheet.create({
     color: "#F9FAFB",
     fontSize: 18,
     fontWeight: "700",
-  },
-  sessionButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    backgroundColor: "#2563EB",
-  },
-  sessionButtonDisabled: {
-    opacity: 0.6,
-  },
-  sessionText: {
-    color: "#F9FAFB",
-    fontWeight: "600",
   },
   logout: {
     paddingHorizontal: 12,
