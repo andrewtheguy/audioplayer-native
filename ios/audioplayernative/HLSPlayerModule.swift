@@ -276,17 +276,10 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     // Clear preloading state if still set
     isPreloading = false
 
-    // If player is in stopped/ended state, we need to seek before playing
+    // If player is in stopped/ended state, seek to beginning before playing
     // VLC won't resume from an ended state without seeking first
     if let player = player, player.state == .stopped || player.state == .ended {
-      let currentTime = player.time.intValue
-      // If at or near the end, seek to beginning; otherwise keep current position
-      let duration = player.media?.length.intValue ?? 0
-      if duration > 0 && (duration - currentTime) < 1000 {
-        player.time = VLCTime(int: 0)
-      } else {
-        player.time = VLCTime(int: currentTime)
-      }
+      player.time = VLCTime(int: 0)
     }
 
     player?.play()
