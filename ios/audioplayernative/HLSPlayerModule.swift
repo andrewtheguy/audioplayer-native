@@ -837,6 +837,9 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
     // Use async dispatch to run after VLCKit's own async idle timer update
     DispatchQueue.main.async {
       UIApplication.shared.isIdleTimerDisabled = false
+      #if DEBUG
+      print("[HLSPlayer] idleTimerDisabled = \(UIApplication.shared.isIdleTimerDisabled)")
+      #endif
     }
 
     // When playback naturally ends or stops, update intent to not playing
