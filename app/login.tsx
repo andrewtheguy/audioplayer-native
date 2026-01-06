@@ -140,6 +140,7 @@ export default function LoginScreen() {
     setStep("npub");
     setSecret("");
     setError(null);
+    setPubkeyHex(null);
   };
 
   const handleRetry = () => {

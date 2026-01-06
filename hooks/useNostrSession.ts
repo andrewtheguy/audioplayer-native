@@ -96,6 +96,7 @@ export function useNostrSession({
   const staleNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onSessionStatusChangeRef = useRef(onSessionStatusChange);
   const initializingRef = useRef(false);
+  const isSubmittingNpubRef = useRef(false);
 
   useEffect(() => {
     onSessionStatusChangeRef.current = onSessionStatusChange;

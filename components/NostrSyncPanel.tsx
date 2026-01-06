@@ -29,7 +29,7 @@ interface NostrSyncPanelProps {
 }
 
 function StatusBadge({ status }: { status: SessionStatus }) {
-  const statusConfig: Record<string, { label: string; bg: string; color: string }> = {
+  const statusConfig: Partial<Record<SessionStatus, { label: string; bg: string; color: string }>> = {
     active: { label: "ACTIVE", bg: "#22C55E20", color: "#22C55E" },
     stale: { label: "STALE", bg: "#F59E0B20", color: "#F59E0B" },
     idle: { label: "READY", bg: "#3B82F620", color: "#3B82F6" },
