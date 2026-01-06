@@ -1,4 +1,5 @@
 import type { HistoryEntry, HistoryPayload } from "@/lib/history";
+import { gcm } from "@noble/ciphers/aes.js";
 import { hkdf } from "@noble/hashes/hkdf";
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
@@ -165,80 +166,59 @@ export const isValidSecret = isValidSecondarySecret;
 export const generateSecret = generateSecondarySecret;
 
 /**
- * Derive an AES-GCM key from secondary secret for symmetric encryption.
- * Uses HKDF-SHA256 via @noble/hashes.
+ * Derive an AES-256 key from secondary secret using HKDF-SHA256.
+ * Uses @noble/hashes for pure JS implementation compatible with React Native.
+ * Must produce identical output to Web Crypto HKDF.
  */
-function deriveAesKeyBytesFromSecret(secret: string): Uint8Array {
+function deriveAesKeyFromSecret(secret: string): Uint8Array {
   const secretBytes = utf8ToBytes(secret);
   const saltBytes = utf8ToBytes("audioplayer-secondary-secret-v1");
+  // HKDF with SHA-256, empty info, 32 bytes output (256 bits)
   return hkdf(sha256, secretBytes, saltBytes, new Uint8Array(0), 32);
 }
 
 /**
- * Encrypt data with secondary secret using AES-GCM
+ * Encrypt data with secondary secret using AES-GCM.
+ * Uses @noble/ciphers for pure JS AES-GCM implementation.
  */
-export async function encryptWithSecondarySecret(
+export function encryptWithSecondarySecret(
   data: string,
   secondarySecret: string
-): Promise<string> {
+): string {
   if (!isValidSecondarySecret(secondarySecret)) {
     throw new Error("Invalid secondary secret format");
   }
 
-  const keyBytes = deriveAesKeyBytesFromSecret(secondarySecret);
-  const keyBuffer = keyBytes.buffer.slice(
-    keyBytes.byteOffset,
-    keyBytes.byteOffset + keyBytes.byteLength
-  ) as ArrayBuffer;
-  const key = await crypto.subtle.importKey(
-    "raw",
-    keyBuffer,
-    { name: "AES-GCM" },
-    false,
-    ["encrypt"]
-  );
-
+  const key = deriveAesKeyFromSecret(secondarySecret);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encoder = new TextEncoder();
   const dataBytes = encoder.encode(data);
 
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    key,
-    dataBytes
-  );
+  // Use @noble/ciphers AES-GCM
+  const aes = gcm(key, iv);
+  const ciphertext = aes.encrypt(dataBytes);
 
-  // Combine IV + ciphertext and base64 encode
-  const combined = new Uint8Array(iv.length + ciphertext.byteLength);
+  // Combine IV + ciphertext (ciphertext includes auth tag) and base64 encode
+  const combined = new Uint8Array(iv.length + ciphertext.length);
   combined.set(iv);
-  combined.set(new Uint8Array(ciphertext), iv.length);
+  combined.set(ciphertext, iv.length);
 
   return fromByteArray(combined);
 }
 
 /**
- * Decrypt data with secondary secret using AES-GCM
+ * Decrypt data with secondary secret using AES-GCM.
+ * Uses @noble/ciphers for pure JS AES-GCM implementation.
  */
-export async function decryptWithSecondarySecret(
+export function decryptWithSecondarySecret(
   ciphertext: string,
   secondarySecret: string
-): Promise<string> {
+): string {
   if (!isValidSecondarySecret(secondarySecret)) {
     throw new Error("Invalid secondary secret format");
   }
 
-  const keyBytes = deriveAesKeyBytesFromSecret(secondarySecret);
-  const keyBuffer = keyBytes.buffer.slice(
-    keyBytes.byteOffset,
-    keyBytes.byteOffset + keyBytes.byteLength
-  ) as ArrayBuffer;
-  const key = await crypto.subtle.importKey(
-    "raw",
-    keyBuffer,
-    { name: "AES-GCM" },
-    false,
-    ["decrypt"]
-  );
+  const key = deriveAesKeyFromSecret(secondarySecret);
 
   let combined: Uint8Array;
   try {
@@ -255,11 +235,9 @@ export async function decryptWithSecondarySecret(
   const encrypted = combined.slice(12);
 
   try {
-    const decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
-      key,
-      encrypted
-    );
+    // Use @noble/ciphers AES-GCM (encrypted includes auth tag)
+    const aes = gcm(key, iv);
+    const decrypted = aes.decrypt(encrypted);
     const decoder = new TextDecoder();
     return decoder.decode(decrypted);
   } catch {
