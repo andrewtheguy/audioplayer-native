@@ -215,6 +215,10 @@ export function useNostrSession({
   // Run initialization on mount
   useEffect(() => {
     initializeSession();
+    return () => {
+      // Reset on unmount for React StrictMode double-mount
+      initializingRef.current = false;
+    };
   }, [initializeSession]);
 
   // Submit npub (first step of login)

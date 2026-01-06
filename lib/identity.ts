@@ -76,12 +76,14 @@ export async function saveNpub(npub: string): Promise<void> {
 
 /**
  * Clear npub from AsyncStorage
+ * @throws Error if AsyncStorage operation fails
  */
 export async function clearNpub(): Promise<void> {
     try {
         await AsyncStorage.removeItem(NPUB_KEY);
     } catch (err) {
         console.warn("Failed to clear npub:", err);
+        throw err;
     }
 }
 
@@ -119,12 +121,14 @@ export async function setSecondarySecret(fingerprint: string, secret: string): P
 
 /**
  * Clear secondary secret from AsyncStorage
+ * @throws Error if AsyncStorage operation fails
  */
 export async function clearSecondarySecret(fingerprint: string): Promise<void> {
     try {
         await AsyncStorage.removeItem(getSecondarySecretKey(fingerprint));
     } catch (err) {
         console.warn("Failed to clear secondary secret:", err);
+        throw err;
     }
 }
 
