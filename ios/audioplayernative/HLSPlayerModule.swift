@@ -120,7 +120,13 @@ class HLSPlayerModule: RCTEventEmitter {
     let asset = AVURLAsset(url: url)
     let item = AVPlayerItem(asset: asset)
     self.playerItem = item
+    
+    // Buffering configuration to reduce glitches
+    item.preferredForwardBufferDuration = 30
+    item.canUseNetworkResourcesForLiveStreamingWhilePaused = true
+    
     self.player = AVPlayer(playerItem: item)
+    self.player?.automaticallyWaitsToMinimizeStalling = true
     
     // Add Observers
     addPlayerObservers(item: item, player: self.player!)
