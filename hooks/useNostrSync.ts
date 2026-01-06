@@ -25,7 +25,7 @@ interface UseNostrSyncOptions {
 interface UseNostrSyncResult {
   status: "idle" | "loading" | "saving" | "synced" | "error";
   message: string | null;
-  performLoad: (followRemote?: boolean) => (() => void) | undefined;
+  performLoad: (isTakeOver?: boolean) => (() => void) | undefined;
   performInitialLoad: () => void;
   startSession: () => void;
   performSave: (
@@ -136,7 +136,7 @@ export function useNostrSync({
   );
 
   const performLoad = useCallback(
-    (followRemote = false) => {
+    (isTakeOver = false) => {
       const keys = encryptionKeysRef.current;
       if (!keys) return;
 
@@ -146,7 +146,7 @@ export function useNostrSync({
       (async () => {
         try {
           setStatus("loading");
-          setMessage("Loading history...");
+          setMessage(isTakeOver ? "Starting session..." : "Loading history...");
           const cloudData = await loadHistoryFromNostr(keys, signal);
 
           if (cloudData) {
@@ -154,8 +154,22 @@ export function useNostrSync({
             if (timestamp > latestTimestampRef.current) {
               latestTimestampRef.current = timestamp;
             }
-            const result = mergeAndNotify(cloudHistory, followRemote);
-            if (sessionStatusRef.current === "active") {
+            const result = mergeAndNotify(cloudHistory, isTakeOver);
+
+            // When taking over, always save to publish new session ID
+            if (isTakeOver) {
+              setSessionStatusRef.current("active");
+              sessionStatusRef.current = "active";
+              try {
+                await performSave(result.merged, { silent: false });
+                setMessage("Session started");
+              } catch (err) {
+                console.error("Failed to publish session:", err);
+                setStatus("error");
+                setMessage(err instanceof Error ? err.message : "Failed to start session");
+                return;
+              }
+            } else if (sessionStatusRef.current === "active") {
               setStatus("synced");
               setMessage(
                 result.addedFromCloud > 0
@@ -164,17 +178,24 @@ export function useNostrSync({
               );
             }
           } else {
-            setStatus("synced");
-            setMessage("No synced history found.");
+            // No cloud data - save local history
+            if (isTakeOver) {
+              setSessionStatusRef.current("active");
+              sessionStatusRef.current = "active";
+            }
             if (sessionStatusRef.current === "active") {
               try {
-                await performSave(historyRef.current, { silent: true });
+                await performSave(historyRef.current, { silent: false });
+                setMessage("Session started (new)");
               } catch (err) {
                 console.error("Failed to save history after load:", err);
                 setStatus("error");
                 setMessage(err instanceof Error ? err.message : "Failed to save history");
                 return;
               }
+            } else {
+              setStatus("synced");
+              setMessage("No synced history found.");
             }
           }
         } catch (err) {
@@ -225,8 +246,7 @@ export function useNostrSync({
 
   const startSession = useCallback(() => {
     if (!encryptionKeysRef.current) return;
-    sessionStatusRef.current = "active";
-    setSessionStatusRef.current("active");
+    // performLoad(true) will set status to active and publish session ID
     performLoad(true);
   }, [performLoad]);
 
@@ -273,12 +293,13 @@ export function useNostrSync({
     };
   }, [encryptionKeys, sessionId, appState, sessionStatus]);
 
-  // App state change effect
+  // App state change effect - refresh data when app comes to foreground
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
       setAppState(nextState);
+      // When returning to foreground, refresh data but don't take over session
       if (nextState === "active" && encryptionKeysRef.current && sessionStatusRef.current !== "invalid") {
-        performLoad(true);
+        performLoad(false);
       }
     });
 
