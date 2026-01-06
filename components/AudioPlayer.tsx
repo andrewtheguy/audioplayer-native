@@ -816,9 +816,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             </Pressable>
           </View>
 
-          {/* Volume/Gain Slider */}
+          {/* Gain Boost Slider */}
           <View style={styles.volumeRow}>
-            <MaterialIcons name="volume-up" size={20} color="#9CA3AF" />
+            <Text style={styles.gainLabel}>Gain</Text>
             <Slider
               style={styles.volumeSlider}
               minimumValue={100}
@@ -831,7 +831,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               maximumTrackTintColor="#374151"
               thumbTintColor="#34D399"
             />
-            <Text style={styles.volumeLabel}>{volume}%</Text>
+            <Text style={styles.volumeLabel}>{(volume / 100).toFixed(1)}x</Text>
           </View>
 
         </View>
@@ -982,8 +982,13 @@ const styles = StyleSheet.create({
   volumeLabel: {
     color: "#9CA3AF",
     fontSize: 14,
-    width: 45,
+    width: 40,
     textAlign: "right",
+  },
+  gainLabel: {
+    color: "#9CA3AF",
+    fontSize: 14,
+    width: 35,
   },
   nowPlaying: {
     color: "#F9FAFB",
