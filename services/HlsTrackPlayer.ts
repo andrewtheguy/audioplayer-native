@@ -387,7 +387,7 @@ export function usePlaybackError(): PlaybackError | null {
   const [error, setError] = useState<PlaybackError | null>(null);
 
   useEffect(() => {
-    const sub = emitter.addListener("playback-error", (payload?: { message?: string; detail?: string; code?: number }) => {
+    const errorSub = emitter.addListener("playback-error", (payload?: { message?: string; detail?: string; code?: number }) => {
       if (payload?.message) {
         setError({
           message: payload.message,
@@ -396,7 +396,24 @@ export function usePlaybackError(): PlaybackError | null {
         });
       }
     });
-    return () => sub.remove();
+
+    // Clear error on success/reset events
+    const streamReadySub = emitter.addListener("stream-ready", () => {
+      setError(null);
+    });
+
+    const stateSub = emitter.addListener("playback-state", (payload?: { state?: string }) => {
+      // Clear error when playback succeeds or resets
+      if (payload?.state === "playing" || payload?.state === "ready" || payload?.state === "stopped") {
+        setError(null);
+      }
+    });
+
+    return () => {
+      errorSub.remove();
+      streamReadySub.remove();
+      stateSub.remove();
+    };
   }, []);
 
   return error;
