@@ -334,6 +334,9 @@ export function useNostrSession({
 
   // Clear identity (logout)
   const clearIdentity = useCallback(async (): Promise<void> => {
+    if (!fingerprint) {
+      throw new Error("No fingerprint to clear");
+    }
     await clearAllIdentityData(fingerprint);
     setNpub(null);
     setPubkeyHex(null);

@@ -116,7 +116,10 @@ export default function PlayerScreen() {
         // Ignore teardown failures on logout
       }
 
-      await clearAllIdentityData(identity?.fingerprint ?? null);
+      if (!identity?.fingerprint) {
+        throw new Error("No fingerprint to clear");
+      }
+      await clearAllIdentityData(identity.fingerprint);
       router.replace("/login");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

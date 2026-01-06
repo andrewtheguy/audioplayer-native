@@ -7,6 +7,7 @@
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { clearHistory } from "./history";
 
 const STORAGE_PREFIX = "com.audioplayer";
 
@@ -128,17 +129,6 @@ export async function clearSecondarySecret(fingerprint: string): Promise<void> {
 }
 
 // =============================================================================
-// History Storage (per npub fingerprint)
-// =============================================================================
-
-/**
- * Get history storage key for a given fingerprint
- */
-export function getHistoryStorageKey(fingerprint: string): string {
-    return `${STORAGE_PREFIX}.history.v1.${fingerprint}`;
-}
-
-// =============================================================================
 // Clear All Identity Data
 // =============================================================================
 
@@ -146,16 +136,11 @@ export function getHistoryStorageKey(fingerprint: string): string {
  * Clear all identity-related data for a given fingerprint
  * Call this on logout
  */
-export async function clearAllIdentityData(fingerprint: string | null): Promise<void> {
+export async function clearAllIdentityData(fingerprint: string): Promise<void> {
     try {
-        // Clear npub (top-level)
+        await clearSecondarySecret(fingerprint);
         await clearNpub();
-
-        // If fingerprint provided, clear fingerprint-scoped data
-        if (fingerprint) {
-            await clearSecondarySecret(fingerprint);
-            await AsyncStorage.removeItem(getHistoryStorageKey(fingerprint));
-        }
+        await clearHistory();
     } catch (err) {
         console.warn("Failed to clear all identity data:", err);
         throw err;
