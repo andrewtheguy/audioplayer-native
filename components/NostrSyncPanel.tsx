@@ -115,8 +115,7 @@ export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelPro
       if (isBusy) return;
       if (!hasKeys) return;
       session.startTakeoverGrace();
-      session.setSessionStatus("active");
-      performLoad(true); // true = follow remote
+      performLoad(true); // true = isTakeOver, sets status to active on success
     };
 
     const handleSyncNow = () => {
