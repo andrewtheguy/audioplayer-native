@@ -22,7 +22,6 @@ export interface NostrSyncPanelHandle {
 
 interface NostrSyncPanelProps {
   encryptionKeys: NostrKeys | null;
-  npub: string;
   fingerprint: string;
   history: HistoryEntry[];
   session: NostrSessionApi;
@@ -31,7 +30,7 @@ interface NostrSyncPanelProps {
 }
 
 function StatusBadge({ status }: { status: SessionStatus }) {
-  const config = {
+  const statusConfig: Record<string, { label: string; bg: string; color: string }> = {
     active: { label: "ACTIVE", bg: "#22C55E20", color: "#22C55E" },
     stale: { label: "STALE", bg: "#F59E0B20", color: "#F59E0B" },
     idle: { label: "READY", bg: "#3B82F620", color: "#3B82F6" },
@@ -40,9 +39,10 @@ function StatusBadge({ status }: { status: SessionStatus }) {
     needs_setup: { label: "SETUP", bg: "#A855F720", color: "#A855F7" },
     invalid: { label: "ERROR", bg: "#EF444420", color: "#EF4444" },
     no_npub: { label: "", bg: "transparent", color: "transparent" },
-  }[status];
+  };
 
-  if (!config.label) return null;
+  const config = statusConfig[status];
+  if (!config || !config.label) return null;
 
   return (
     <View style={[styles.badge, { backgroundColor: config.bg }]}>
@@ -52,7 +52,7 @@ function StatusBadge({ status }: { status: SessionStatus }) {
 }
 
 export const NostrSyncPanel = forwardRef<NostrSyncPanelHandle, NostrSyncPanelProps>(
-  ({ encryptionKeys, npub, fingerprint, history, session, onHistoryLoaded, onRemoteSync }, ref) => {
+  ({ encryptionKeys, fingerprint, history, session, onHistoryLoaded, onRemoteSync }, ref) => {
     const [npubFingerprint, setNpubFingerprint] = useState<string | null>(null);
     const [showDetails, setShowDetails] = useState(false);
 

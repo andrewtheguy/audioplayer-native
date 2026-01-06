@@ -639,7 +639,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           <NostrSyncPanel
             ref={syncRef}
             encryptionKeys={session.encryptionKeys}
-            npub={npub}
             fingerprint={fingerprint}
             history={history}
             session={session}
@@ -896,7 +895,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         <NostrSyncPanel
           ref={syncRef}
           encryptionKeys={session.encryptionKeys}
-          npub={npub}
           fingerprint={fingerprint}
           history={history}
           session={session}
