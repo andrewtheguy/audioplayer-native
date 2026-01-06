@@ -130,6 +130,13 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       }
     }, [playbackError]);
 
+    // Clear error when playback succeeds or a new load begins
+    useEffect(() => {
+      if (isPlayingNative || loading) {
+        setError(null);
+      }
+    }, [isPlayingNative, loading]);
+
     useEffect(() => {
       if (playbackState.state !== State.Stopped) return;
       // Don't reset position when stopped - let it stay at the end like web player
