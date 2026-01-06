@@ -4,7 +4,7 @@ import { useNostrSession } from "@/hooks/useNostrSession";
 import type { HistoryEntry } from "@/lib/history";
 import { getHistory, saveHistory } from "@/lib/history";
 import * as TrackPlayer from "@/services/HlsTrackPlayer";
-import { State, usePlaybackIntent, usePlaybackState, useProgress, useStreamReady } from "@/services/HlsTrackPlayer";
+import { State, usePlaybackError, usePlaybackIntent, usePlaybackState, useProgress, useStreamReady } from "@/services/HlsTrackPlayer";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import Slider from "@react-native-community/slider";
 import {
@@ -63,6 +63,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const [showUrlInput, setShowUrlInput] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [editingTitleValue, setEditingTitleValue] = useState("");
+    const [showDebugInfo, setShowDebugInfo] = useState(false);
 
     // Scrubbing state - when true, we show scrub position instead of actual position
     const [isScrubbing, setIsScrubbing] = useState(false);
@@ -76,16 +77,15 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const playbackState = usePlaybackState();
     const playbackIntent = usePlaybackIntent();
     const streamInfo = useStreamReady();
+    const playbackError = usePlaybackError();
     const hasActiveTrack = Boolean(nowPlayingUrl);
     // Use VLC duration if available, otherwise fall back to probe duration
     const duration = vlcDuration > 0 ? vlcDuration : probeDuration;
     const hasFiniteDuration = Number.isFinite(duration) && duration > 0;
-    const effectivePlaybackState = playbackState.state;
-    const isPlayingNative = effectivePlaybackState === State.Playing;
-    const isBuffering = effectivePlaybackState === State.Buffering;
+    const isPlayingNative = playbackState.state === State.Playing;
+    const isBuffering = playbackState.state === State.Buffering;
     const isIntentPlaying = playbackIntent.playing;
     const isPlaying = isPlayingNative;
-    const effectiveStateLabel = State[effectivePlaybackState] ?? "Unknown";
     const nativeStateLabel = State[playbackState.state] ?? "Unknown";
     const intentStateLabel = isIntentPlaying ? "Playing" : "Paused";
 
@@ -101,10 +101,11 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const isViewOnly = session.sessionStatus !== "active";
     const syncRef = useRef<NostrSyncPanelHandle | null>(null);
     const lastSessionStatusRef = useRef<SessionStatus>(session.sessionStatus);
-    // Treat true loading separately from an unloaded/empty player state for clearer UI/debug
-    const isLoadingState = loading || effectivePlaybackState === State.Buffering;
-    const isUnloaded = effectivePlaybackState === State.None;
-    const controlsDisabled = isViewOnly || isLoadingState || isUnloaded;
+    // Treat true loading separately from buffering - buffering is part of playback, not loading
+    // Controls should be enabled during buffering (user can pause, seek, etc.)
+    const isLoadingState = loading;
+    const isUnloaded = playbackState.state === State.None;
+    const controlsDisabled = isViewOnly || loading || isUnloaded;
 
     useEffect(() => {
       isLiveStreamRef.current = isLiveStream;
@@ -118,6 +119,24 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         setProbeDuration(streamInfo.duration > 0 ? streamInfo.duration : 0);
       }
     }, [streamInfo]);
+
+    // Display native playback errors
+    useEffect(() => {
+      if (playbackError) {
+        const message = playbackError.detail
+          ? `${playbackError.message}: ${playbackError.detail}`
+          : playbackError.message;
+        setError(message);
+        setLoading(false);
+      }
+    }, [playbackError]);
+
+    // Clear error when playback succeeds or a new load begins
+    useEffect(() => {
+      if (isPlayingNative || loading) {
+        setError(null);
+      }
+    }, [isPlayingNative, loading]);
 
     useEffect(() => {
       if (playbackState.state !== State.Stopped) return;
@@ -391,6 +410,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     };
 
     const handleJumpBackward = async () => {
+      if (isLiveStreamRef.current) return;
       try {
         await TrackPlayer.jumpBackward();
       } catch (err) {
@@ -399,6 +419,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     };
 
     const handleJumpForward = async () => {
+      if (isLiveStreamRef.current) return;
       try {
         await TrackPlayer.jumpForward();
       } catch (err) {
@@ -516,15 +537,18 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     // Seek slider handlers
     const handleSeekStart = () => {
+      if (isLiveStreamRef.current) return;
       setIsScrubbing(true);
       setScrubPosition(displayPosition);
     };
 
     const handleSeekChange = (value: number) => {
+      if (isLiveStreamRef.current) return;
       setScrubPosition(value);
     };
 
     const handleSeekComplete = async (value: number) => {
+      if (isLiveStreamRef.current) return;
       setScrubPosition(value);
       await seekTo(value);
       setIsScrubbing(false);
@@ -547,6 +571,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const displayPosition = hasActiveTrack ? computedDisplayPosition : 0;
     const displayDuration = hasActiveTrack && hasFiniteDuration ? duration : null;
     const displayPositionLabel = hasActiveTrack ? displayPosition : null;
+    const seekDisabled = controlsDisabled || isLiveStream || !hasActiveTrack || !hasFiniteDuration;
 
     if (isViewOnly) {
       const isLiveDisplay = false;
@@ -705,23 +730,37 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               <Text style={styles.nowPlayingUrl} numberOfLines={1}>
                 {nowPlayingUrl}
               </Text>
-              <Text style={styles.debugMeta}>Intent: {intentStateLabel}</Text>
-              <Text style={styles.debugMeta}>Native: {nativeStateLabel}</Text>
-              <Text style={styles.debugMeta}>Effective: {effectiveStateLabel}</Text>
-              <Text style={styles.debugMeta}>Duration: VLC={vlcDuration.toFixed(1)} Probe={probeDuration.toFixed(1)}</Text>
-              {isBuffering ? <Text style={styles.debugMeta}>Buffering</Text> : null}
-              {isLoadingState ? <Text style={styles.debugMeta}>Loading</Text> : null}
-              {isUnloaded ? <Text style={styles.debugMeta}>Unloaded</Text> : null}
-              {isLiveStream ? <Text style={styles.debugMeta}>Live stream</Text> : null}
+              <Pressable
+                style={styles.debugToggle}
+                onPress={() => setShowDebugInfo(!showDebugInfo)}
+              >
+                <MaterialIcons
+                  name={showDebugInfo ? "expand-less" : "expand-more"}
+                  size={16}
+                  color="#6B7280"
+                />
+                <Text style={styles.debugToggleText}>Debug Info</Text>
+              </Pressable>
+              {showDebugInfo && (
+                <View style={styles.debugPanel}>
+                  <Text style={styles.debugMeta}>Intent: {intentStateLabel}</Text>
+                  <Text style={styles.debugMeta}>Native: {nativeStateLabel}</Text>
+                  <Text style={styles.debugMeta}>Duration: VLC={vlcDuration.toFixed(1)} Probe={probeDuration.toFixed(1)}</Text>
+                  {isBuffering ? <Text style={styles.debugMeta}>Buffering</Text> : null}
+                  {isLoadingState ? <Text style={styles.debugMeta}>Loading</Text> : null}
+                  {isUnloaded ? <Text style={styles.debugMeta}>Unloaded</Text> : null}
+                  {isLiveStream ? <Text style={styles.debugMeta}>Live stream</Text> : null}
+                </View>
+              )}
             </>
           ) : (
             <Text style={styles.nowPlayingTitle}>Nothing loaded</Text>
           )}
           <View style={styles.seekRow}>
-            {isLiveStream ? <View style={styles.seekPlaceholder} /> : (
+            {loading || isLiveStream ? <View style={styles.seekPlaceholder} /> : (
               <Text style={styles.meta}>{formatTime(displayPositionLabel)}</Text>
             )}
-            <Text style={styles.meta}>{isLiveStream ? "Live" : formatTime(displayDuration)}</Text>
+            <Text style={styles.meta}>{loading ? "--:--" : isLiveStream ? "Live" : formatTime(displayDuration)}</Text>
           </View>
 
           {/* Seek Slider */}
@@ -733,7 +772,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             onSlidingStart={handleSeekStart}
             onValueChange={handleSeekChange}
             onSlidingComplete={handleSeekComplete}
-            disabled={controlsDisabled || isLiveStream || !hasActiveTrack || !hasFiniteDuration}
+            disabled={seekDisabled}
             minimumTrackTintColor="#60A5FA"
             maximumTrackTintColor="#374151"
             thumbTintColor="#93C5FD"
@@ -741,9 +780,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
           <View style={[styles.row, styles.rowCentered]}>
             <Pressable
-              style={[styles.secondaryButton, controlsDisabled && styles.buttonDisabled]}
+              style={[styles.secondaryButton, seekDisabled && styles.buttonDisabled]}
               onPress={() => void handleJumpBackward()}
-              disabled={controlsDisabled}
+              disabled={seekDisabled}
             >
               <Text style={styles.secondaryButtonText}>-15s</Text>
             </Pressable>
@@ -759,9 +798,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               />
             </Pressable>
             <Pressable
-              style={[styles.secondaryButton, controlsDisabled && styles.buttonDisabled]}
+              style={[styles.secondaryButton, seekDisabled && styles.buttonDisabled]}
               onPress={() => void handleJumpForward()}
-              disabled={controlsDisabled}
+              disabled={seekDisabled}
             >
               <Text style={styles.secondaryButtonText}>+30s</Text>
             </Pressable>
@@ -926,6 +965,23 @@ const styles = StyleSheet.create({
   meta: {
     color: "#9CA3AF",
     marginTop: 6,
+  },
+  debugToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 8,
+    paddingVertical: 4,
+  },
+  debugToggleText: {
+    color: "#6B7280",
+    fontSize: 12,
+    marginLeft: 4,
+  },
+  debugPanel: {
+    marginTop: 4,
+    paddingLeft: 8,
+    borderLeftWidth: 2,
+    borderLeftColor: "#374151",
   },
   debugMeta: {
     color: "#9CA3AF",
