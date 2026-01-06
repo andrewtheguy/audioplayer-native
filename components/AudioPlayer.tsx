@@ -63,6 +63,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const [showUrlInput, setShowUrlInput] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [editingTitleValue, setEditingTitleValue] = useState("");
+    const [showDebugInfo, setShowDebugInfo] = useState(false);
 
     // Scrubbing state - when true, we show scrub position instead of actual position
     const [isScrubbing, setIsScrubbing] = useState(false);
@@ -729,13 +730,28 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
               <Text style={styles.nowPlayingUrl} numberOfLines={1}>
                 {nowPlayingUrl}
               </Text>
-              <Text style={styles.debugMeta}>Intent: {intentStateLabel}</Text>
-              <Text style={styles.debugMeta}>Native: {nativeStateLabel}</Text>
-              <Text style={styles.debugMeta}>Duration: VLC={vlcDuration.toFixed(1)} Probe={probeDuration.toFixed(1)}</Text>
-              {isBuffering ? <Text style={styles.debugMeta}>Buffering</Text> : null}
-              {isLoadingState ? <Text style={styles.debugMeta}>Loading</Text> : null}
-              {isUnloaded ? <Text style={styles.debugMeta}>Unloaded</Text> : null}
-              {isLiveStream ? <Text style={styles.debugMeta}>Live stream</Text> : null}
+              <Pressable
+                style={styles.debugToggle}
+                onPress={() => setShowDebugInfo(!showDebugInfo)}
+              >
+                <MaterialIcons
+                  name={showDebugInfo ? "expand-less" : "expand-more"}
+                  size={16}
+                  color="#6B7280"
+                />
+                <Text style={styles.debugToggleText}>Debug Info</Text>
+              </Pressable>
+              {showDebugInfo && (
+                <View style={styles.debugPanel}>
+                  <Text style={styles.debugMeta}>Intent: {intentStateLabel}</Text>
+                  <Text style={styles.debugMeta}>Native: {nativeStateLabel}</Text>
+                  <Text style={styles.debugMeta}>Duration: VLC={vlcDuration.toFixed(1)} Probe={probeDuration.toFixed(1)}</Text>
+                  {isBuffering ? <Text style={styles.debugMeta}>Buffering</Text> : null}
+                  {isLoadingState ? <Text style={styles.debugMeta}>Loading</Text> : null}
+                  {isUnloaded ? <Text style={styles.debugMeta}>Unloaded</Text> : null}
+                  {isLiveStream ? <Text style={styles.debugMeta}>Live stream</Text> : null}
+                </View>
+              )}
             </>
           ) : (
             <Text style={styles.nowPlayingTitle}>Nothing loaded</Text>
@@ -949,6 +965,23 @@ const styles = StyleSheet.create({
   meta: {
     color: "#9CA3AF",
     marginTop: 6,
+  },
+  debugToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 8,
+    paddingVertical: 4,
+  },
+  debugToggleText: {
+    color: "#6B7280",
+    fontSize: 12,
+    marginLeft: 4,
+  },
+  debugPanel: {
+    marginTop: 4,
+    paddingLeft: 8,
+    borderLeftWidth: 2,
+    borderLeftColor: "#374151",
   },
   debugMeta: {
     color: "#9CA3AF",
