@@ -217,6 +217,10 @@ export function useNostrSession({
   // Submit npub (first step of login)
   const submitNpub = useCallback(
     async (npubInput: string): Promise<boolean> => {
+      if (isSubmittingNpubRef.current) {
+        return false;
+      }
+
       const trimmed = npubInput.trim();
       const hex = parseNpub(trimmed);
       if (!hex) {
@@ -224,52 +228,57 @@ export function useNostrSession({
         return false;
       }
 
-      // Clear leftover history from previous session before login
-      await clearHistory();
+      isSubmittingNpubRef.current = true;
+      try {
+        // Clear leftover history from previous session before login
+        await clearHistory();
 
-      // Save npub
-      await saveNpub(trimmed);
-      setNpub(trimmed);
-      setPubkeyHex(hex);
+        // Save npub
+        await saveNpub(trimmed);
+        setNpub(trimmed);
+        setPubkeyHex(hex);
 
-      // Check if we have a cached secret
-      const cachedSecret = await getSecondarySecret();
-      if (cachedSecret) {
-        setSecondarySecretState(cachedSecret);
-        // Try to load player id
-        setSessionStatus("loading");
-        try {
-          const remotePlayerId = await loadPlayerIdFromNostr(hex, cachedSecret);
-          if (remotePlayerId && isValidPlayerId(remotePlayerId)) {
-            const keys = await deriveEncryptionKey(remotePlayerId);
-            setPlayerState({ playerId: remotePlayerId, encryptionKeys: keys });
-            setSessionStatus("idle");
-            setSessionNotice(null);
+        // Check if we have a cached secret
+        const cachedSecret = await getSecondarySecret();
+        if (cachedSecret) {
+          setSecondarySecretState(cachedSecret);
+          // Try to load player id
+          setSessionStatus("loading");
+          try {
+            const remotePlayerId = await loadPlayerIdFromNostr(hex, cachedSecret);
+            if (remotePlayerId && isValidPlayerId(remotePlayerId)) {
+              const keys = await deriveEncryptionKey(remotePlayerId);
+              setPlayerState({ playerId: remotePlayerId, encryptionKeys: keys });
+              setSessionStatus("idle");
+              setSessionNotice(null);
+              return true;
+            }
+            setSessionStatus("needs_setup");
+            setSessionNotice("No player ID found. Please set up your identity on the web app first.");
             return true;
-          }
-          setSessionStatus("needs_setup");
-          setSessionNotice("No player ID found. Please set up your identity on the web app first.");
-          return true;
-        } catch (err) {
-          if (err instanceof PlayerIdDecryptionError) {
-            setSecondarySecretState(null);
-            await clearSecondarySecret();
+          } catch (err) {
+            if (err instanceof PlayerIdDecryptionError) {
+              setSecondarySecretState(null);
+              await clearSecondarySecret();
+              setSessionStatus("needs_secret");
+              setSessionNotice("Cached secret is invalid. Please re-enter.");
+              return true;
+            }
             setSessionStatus("needs_secret");
-            setSessionNotice("Cached secret is invalid. Please re-enter.");
+            setSessionNotice(
+              `Network error: ${err instanceof Error ? err.message : "Unknown error"}. Please try again.`
+            );
             return true;
           }
-          setSessionStatus("needs_secret");
-          setSessionNotice(
-            `Network error: ${err instanceof Error ? err.message : "Unknown error"}. Please try again.`
-          );
-          return true;
         }
-      }
 
-      // No cached secret, prompt for it
-      setSessionStatus("needs_secret");
-      setSessionNotice(null);
-      return true;
+        // No cached secret, prompt for it
+        setSessionStatus("needs_secret");
+        setSessionNotice(null);
+        return true;
+      } finally {
+        isSubmittingNpubRef.current = false;
+      }
     },
     []
   );
