@@ -26,6 +26,8 @@
 		240D222906FA62721B85F01C /* Pods-audioplayernative.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-audioplayernative.debug.xcconfig"; path = "Target Support Files/Pods-audioplayernative/Pods-audioplayernative.debug.xcconfig"; sourceTree = "<group>"; };
 		9BE18E24445F5057EAEEF894 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-audioplayernative/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
 		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = audioplayernative/SplashScreen.storyboard; sourceTree = "<group>"; };
+		APPCONFIG00000000000DEBUG /* App-Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "App-Debug.xcconfig"; sourceTree = "<group>"; };
+		APPCONFIG0000000000RELEASE /* App-Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "App-Release.xcconfig"; sourceTree = "<group>"; };
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
 		C35714618DA42191FECDFCDD /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = audioplayernative/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		CA76421D90C141988F9B6C77 /* Pods-audioplayernative.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-audioplayernative.release.xcconfig"; path = "Target Support Files/Pods-audioplayernative/Pods-audioplayernative.release.xcconfig"; sourceTree = "<group>"; };
@@ -100,6 +102,8 @@
 		83CBB9F61A601CBA00E9B192 = {
 			isa = PBXGroup;
 			children = (
+				APPCONFIG00000000000DEBUG /* App-Debug.xcconfig */,
+				APPCONFIG0000000000RELEASE /* App-Release.xcconfig */,
 				13B07FAE1A68108700A75B9A /* audioplayernative */,
 				832341AE1AAA6A7D00B99B32 /* Libraries */,
 				83CBBA001A601CBA00E9B192 /* Products */,
@@ -490,13 +494,12 @@
 /* Begin XCBuildConfiguration section */
 		13B07F941A680F5B00A75B9A /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 240D222906FA62721B85F01C /* Pods-audioplayernative.debug.xcconfig */;
+			baseConfigurationReference = APPCONFIG00000000000DEBUG /* App-Debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = audioplayernative/audioplayernative.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 5J7W998Y8H;
 				ENABLE_BITCODE = NO;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
@@ -516,7 +519,7 @@
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = "com.andrewchen5678.audioplayer-native";
-				PRODUCT_NAME = "audioplayernative";
+				PRODUCT_NAME = audioplayernative;
 				SWIFT_OBJC_BRIDGING_HEADER = "audioplayernative/audioplayernative-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -527,13 +530,12 @@
 		};
 		13B07F951A680F5B00A75B9A /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = CA76421D90C141988F9B6C77 /* Pods-audioplayernative.release.xcconfig */;
+			baseConfigurationReference = APPCONFIG0000000000RELEASE /* App-Release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = audioplayernative/audioplayernative.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 5J7W998Y8H;
 				INFOPLIST_FILE = audioplayernative/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -548,7 +550,7 @@
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = "com.andrewchen5678.audioplayer-native";
-				PRODUCT_NAME = "audioplayernative";
+				PRODUCT_NAME = audioplayernative;
 				SWIFT_OBJC_BRIDGING_HEADER = "audioplayernative/audioplayernative-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
