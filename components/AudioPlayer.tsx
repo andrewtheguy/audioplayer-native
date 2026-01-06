@@ -51,6 +51,8 @@ function formatTime(seconds: number | null): string {
     .padStart(2, "0")}`;
 }
 
+const SAVE_POSITION_INTERVAL_MS = 5000;
+
 export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   ({ secret, onSessionStatusChange }, ref) => {
     const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -88,7 +90,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const isPlayingNative = playbackState.state === State.Playing;
     const isBuffering = playbackState.state === State.Buffering;
     const isIntentPlaying = playbackIntent.playing;
-    const isPlaying = isPlayingNative;
     const nativeStateLabel = State[playbackState.state] ?? "Unknown";
     const intentStateLabel = isIntentPlaying ? "Playing" : "Paused";
 
@@ -263,14 +264,14 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     // Auto-save every 5 seconds while playing
     useEffect(() => {
-      if (!isPlaying || isViewOnly || isLiveStreamRef.current) return;
+      if (!isIntentPlaying || isViewOnly || isLiveStreamRef.current) return;
       if (!currentUrlRef.current) return;
 
-      if (Date.now() - lastAutoSaveAtRef.current >= 5000) {
+      if (Date.now() - lastAutoSaveAtRef.current >= SAVE_POSITION_INTERVAL_MS) {
         lastAutoSaveAtRef.current = Date.now();
         saveHistoryEntry(position);
       }
-    }, [isPlaying, isViewOnly, position, saveHistoryEntry]);
+    }, [isIntentPlaying, isViewOnly, position, saveHistoryEntry]);
 
     const loadUrl = useCallback(
       async (
@@ -432,10 +433,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     // Reset auto-save timer when playback stops
     useEffect(() => {
-      if (!isPlaying) {
+      if (!isIntentPlaying) {
         lastAutoSaveAtRef.current = 0;
       }
-    }, [isPlaying]);
+    }, [isIntentPlaying]);
 
     const handleRemoteSync = async (remoteHistory: HistoryEntry[]) => {
       const entry = remoteHistory[0];
