@@ -213,14 +213,11 @@ export function useNostrSync({
     const keys = encryptionKeysRef.current;
     if (!keys) return;
 
-    const controller = new AbortController();
-    const { signal } = controller;
-
     (async () => {
       try {
         setStatus("loading");
         setMessage("Loading history...");
-        const cloudData = await loadHistoryFromNostr(keys, signal);
+        const cloudData = await loadHistoryFromNostr(keys);
 
         if (cloudData) {
           const { history: cloudHistory, timestamp } = cloudData;
@@ -240,8 +237,6 @@ export function useNostrSync({
         setMessage(err instanceof Error ? err.message : "Failed to load history");
       }
     })();
-
-    return () => controller.abort();
   }, []);
 
   const startSession = useCallback(() => {
@@ -257,7 +252,6 @@ export function useNostrSync({
     if (appState !== "active") return;
 
     let cleanup: (() => void) | null = null;
-    let cancelled = false;
 
     try {
       cleanup = subscribeToHistoryDetailed(
@@ -288,7 +282,6 @@ export function useNostrSync({
     }
 
     return () => {
-      cancelled = true;
       cleanup?.();
     };
   }, [encryptionKeys, sessionId, appState, sessionStatus]);

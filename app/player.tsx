@@ -32,6 +32,7 @@ function StatusBadge({ status }: { status: SessionStatus }) {
     no_npub: { label: "", bg: "transparent", color: "transparent" },
   }[status];
 
+  if (!config) return null;
   if (!config.label) return null;
 
   return (

@@ -227,7 +227,7 @@ export function decryptWithSecondarySecret(
     throw new Error("Invalid ciphertext format");
   }
 
-  if (combined.length < 13) {
+  if (combined.length < 28) {
     throw new Error("Ciphertext too short");
   }
 
