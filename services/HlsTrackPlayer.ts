@@ -263,9 +263,16 @@ export async function getProgress(): Promise<Progress> {
   };
 }
 
+/**
+ * Set the audio gain/amplification level.
+ * @param volume - Volume level from 100 to 200 (1x to 2x amplification).
+ *                 100 = normal volume (1x), 200 = double amplification (2x).
+ *                 Values outside this range will be clamped.
+ */
 export async function setVolume(volume: number): Promise<void> {
   ensureIOS();
-  await NativeHlsPlayer.setVolume(volume);
+  const clamped = Math.min(Math.max(Math.round(volume), 100), 200);
+  await NativeHlsPlayer.setVolume(clamped);
 }
 
 export async function getPlaybackState(): Promise<PlaybackState> {
