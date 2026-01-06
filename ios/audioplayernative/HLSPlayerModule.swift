@@ -896,15 +896,7 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
     // If user intended pause, do not allow buffering/opening to override to "buffering".
     if desiredIsPlaying {
-      var mapped = mapState(state)
-
-      if state == .buffering || state == .opening {
-        // If VLC reports buffering/opening but is actually playing, surface as playing instead of buffering
-        if player?.isPlaying == true {
-          mapped = "playing"
-        }
-      }
-
+      let mapped = mapState(state)
       sendPlaybackState(mapped)
       updateNowPlayingState(isPlaying: mapped == "playing")
     } else {

@@ -102,10 +102,11 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const isViewOnly = session.sessionStatus !== "active";
     const syncRef = useRef<NostrSyncPanelHandle | null>(null);
     const lastSessionStatusRef = useRef<SessionStatus>(session.sessionStatus);
-    // Treat true loading separately from an unloaded/empty player state for clearer UI/debug
-    const isLoadingState = loading || effectivePlaybackState === State.Buffering;
+    // Treat true loading separately from buffering - buffering is part of playback, not loading
+    // Controls should be enabled during buffering (user can pause, seek, etc.)
+    const isLoadingState = loading;
     const isUnloaded = effectivePlaybackState === State.None;
-    const controlsDisabled = isViewOnly || isLoadingState || isUnloaded;
+    const controlsDisabled = isViewOnly || loading || isUnloaded;
 
     useEffect(() => {
       isLiveStreamRef.current = isLiveStream;
