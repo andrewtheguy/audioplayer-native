@@ -834,7 +834,10 @@ class HLSPlayerModule: RCTEventEmitter, VLCMediaPlayerDelegate, VLCMediaDelegate
 
     // VLCKit disables idle timer when playing video - re-enable it for audio-only playback
     // This allows the device screen to sleep normally while audio continues in background
-    UIApplication.shared.isIdleTimerDisabled = false
+    // Use async dispatch to run after VLCKit's own async idle timer update
+    DispatchQueue.main.async {
+      UIApplication.shared.isIdleTimerDisabled = false
+    }
 
     // When playback naturally ends or stops, update intent to not playing
     if state == .ended || state == .stopped {
