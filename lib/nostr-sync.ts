@@ -30,7 +30,10 @@ const KIND_APP_DATA = 30078; // NIP-78: Application-specific replaceable data
 const D_TAG_PLAYER_ID = "audioplayer-playerid-v1";
 const D_TAG_HISTORY = "audioplayer-history-v1";
 
-const pool = new SimplePool();
+let pool = new SimplePool();
+let poolClosed = false;
+
+const DEFAULT_QUERY_TIMEOUT_MS = 15000; // 15 seconds
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
@@ -40,7 +43,44 @@ function throwIfAborted(signal?: AbortSignal): void {
   }
 }
 
-let poolClosed = false;
+/**
+ * Wrap a promise with a timeout.
+ * If the promise doesn't resolve within the timeout, it rejects with a TimeoutError.
+ */
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message = "Operation timed out"
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      reject(new Error(message));
+    }, timeoutMs);
+
+    promise
+      .then((result) => {
+        clearTimeout(timeoutId);
+        resolve(result);
+      })
+      .catch((err) => {
+        clearTimeout(timeoutId);
+        reject(err);
+      });
+  });
+}
+
+/**
+ * Reset the pool to clear potentially stale connections.
+ * Useful when app returns from background.
+ */
+export function resetPool(): void {
+  if (!poolClosed) {
+    pool.close(RELAYS);
+  }
+  pool = new SimplePool();
+  poolClosed = false;
+}
+
 export function closePool(): void {
   if (poolClosed) return;
   poolClosed = true;
@@ -101,12 +141,16 @@ export async function fetchPlayerIdEventFromNostr(
   signal?: AbortSignal
 ): Promise<{ encryptedPlayerId: string; createdAt: number } | null> {
   throwIfAborted(signal);
-  const events = await pool.querySync(RELAYS, {
-    kinds: [KIND_APP_DATA],
-    authors: [userPublicKey],
-    "#d": [D_TAG_PLAYER_ID],
-    limit: 1,
-  });
+  const events = await withTimeout(
+    pool.querySync(RELAYS, {
+      kinds: [KIND_APP_DATA],
+      authors: [userPublicKey],
+      "#d": [D_TAG_PLAYER_ID],
+      limit: 1,
+    }),
+    DEFAULT_QUERY_TIMEOUT_MS,
+    "Relay connection timed out. Please check your network and try again."
+  );
   throwIfAborted(signal);
 
   if (events.length === 0) {
@@ -226,12 +270,16 @@ export async function loadHistoryFromNostr(
   signal?: AbortSignal
 ): Promise<HistoryPayload | null> {
   throwIfAborted(signal);
-  const events = await pool.querySync(RELAYS, {
-    kinds: [KIND_APP_DATA],
-    authors: [encryptionKeys.publicKey], // History events are authored by player id pubkey
-    "#d": [D_TAG_HISTORY],
-    limit: 1,
-  });
+  const events = await withTimeout(
+    pool.querySync(RELAYS, {
+      kinds: [KIND_APP_DATA],
+      authors: [encryptionKeys.publicKey], // History events are authored by player id pubkey
+      "#d": [D_TAG_HISTORY],
+      limit: 1,
+    }),
+    DEFAULT_QUERY_TIMEOUT_MS,
+    "Relay connection timed out while loading history."
+  );
   throwIfAborted(signal);
 
   if (events.length === 0) {
