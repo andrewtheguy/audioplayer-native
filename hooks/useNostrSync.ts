@@ -4,6 +4,7 @@ import type { NostrKeys } from "@/lib/nostr-crypto";
 import {
   loadHistoryFromNostr,
   mergeHistory,
+  onPoolReset,
   saveHistoryToNostr,
   subscribeToHistoryDetailed,
 } from "@/lib/nostr-sync";
@@ -139,16 +140,21 @@ export function useNostrSync({
   const performLoad = useCallback(
     (isTakeOver = false) => {
       const keys = encryptionKeysRef.current;
-      if (!keys) return;
+      if (!keys) {
+        console.log("[useNostrSync] performLoad: no keys, skipping");
+        return;
+      }
 
       const controller = new AbortController();
       const { signal } = controller;
 
       (async () => {
         try {
+          console.log("[useNostrSync] performLoad: starting, isTakeOver:", isTakeOver);
           setStatus("loading");
           setMessage(isTakeOver ? "Starting session..." : "Loading history...");
           const cloudData = await loadHistoryFromNostr(keys, signal);
+          console.log("[useNostrSync] performLoad: loaded, hasData:", !!cloudData);
 
           if (cloudData) {
             const { history: cloudHistory, timestamp } = cloudData;
@@ -170,7 +176,8 @@ export function useNostrSync({
                 setMessage(err instanceof Error ? err.message : "Failed to start session");
                 return;
               }
-            } else if (sessionStatusRef.current === "active") {
+            } else {
+              // Always update status after successful load
               setStatus("synced");
               setMessage(
                 result.addedFromCloud > 0
@@ -200,6 +207,7 @@ export function useNostrSync({
             }
           }
         } catch (err) {
+          console.error("[useNostrSync] performLoad failed:", err);
           setStatus("error");
           setMessage(err instanceof Error ? err.message : "Failed to load history");
         }
@@ -287,27 +295,30 @@ export function useNostrSync({
     };
   }, [encryptionKeys, sessionId, appState, sessionStatus]);
 
-  // App state change effect - refresh data when app comes to foreground
-  // Note: resetPool is called by useNostrSession when app returns from background/inactive
+  // Listen for pool reset events to refresh data
+  // This is triggered by useNostrSession when app returns from background/inactive
+  useEffect(() => {
+    const unsubscribe = onPoolReset(() => {
+      console.log("[useNostrSync] Pool was reset, refreshing data");
+      if (encryptionKeysRef.current && sessionStatusRef.current !== "invalid") {
+        performLoad(false);
+      }
+    });
+
+    return unsubscribe;
+  }, [performLoad]);
+
+  // Track app state for subscription management
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
-      const wasNotActive = lastAppStateRef.current !== "active";
       lastAppStateRef.current = nextState;
       setAppState(nextState);
-
-      // When returning to foreground (from background or inactive/locked), refresh data
-      if (nextState === "active" && wasNotActive) {
-        console.log("[useNostrSync] App became active, refreshing data");
-        if (encryptionKeysRef.current && sessionStatusRef.current !== "invalid") {
-          performLoad(false);
-        }
-      }
     });
 
     return () => {
       subscription.remove();
     };
-  }, [performLoad]);
+  }, []);
 
   // Auto-save effect
   useEffect(() => {

@@ -35,6 +35,27 @@ let poolClosed = false;
 
 const DEFAULT_QUERY_TIMEOUT_MS = 15000; // 15 seconds
 
+// Simple event emitter for pool reset events
+type PoolResetListener = () => void;
+const poolResetListeners = new Set<PoolResetListener>();
+
+export function onPoolReset(listener: PoolResetListener): () => void {
+  poolResetListeners.add(listener);
+  return () => {
+    poolResetListeners.delete(listener);
+  };
+}
+
+function emitPoolReset(): void {
+  for (const listener of poolResetListeners) {
+    try {
+      listener();
+    } catch (err) {
+      console.error("[nostr-sync] Pool reset listener error:", err);
+    }
+  }
+}
+
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     const err = new Error("Aborted");
@@ -72,13 +93,16 @@ function withTimeout<T>(
 /**
  * Reset the pool to clear potentially stale connections.
  * Useful when app returns from background.
+ * Emits a pool reset event that listeners can use to refresh data.
  */
 export function resetPool(): void {
+  console.log("[nostr-sync] Resetting pool");
   if (!poolClosed) {
     pool.close(RELAYS);
   }
   pool = new SimplePool();
   poolClosed = false;
+  emitPoolReset();
 }
 
 export function closePool(): void {
