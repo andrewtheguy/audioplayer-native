@@ -20,6 +20,8 @@ import {
   PlayerIdDecryptionError,
 } from "@/lib/nostr-sync";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AppState, type AppStateStatus } from "react-native";
+import { resetPool } from "@/lib/nostr-sync";
 
 export type SessionStatus =
   | "no_npub" // No npub stored
@@ -92,11 +94,14 @@ export function useNostrSession({
   const [localSessionId] = useState(() => generateSessionId());
   const [ignoreRemoteUntil, setIgnoreRemoteUntil] = useState<number>(0);
 
+  const [appState, setAppState] = useState<AppStateStatus>(AppState.currentState);
+
   const prevStatusRef = useRef<SessionStatus>(sessionStatus);
   const staleNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onSessionStatusChangeRef = useRef(onSessionStatusChange);
   const initializingRef = useRef(false);
   const isSubmittingNpubRef = useRef(false);
+  const lastAppStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   useEffect(() => {
     onSessionStatusChangeRef.current = onSessionStatusChange;
@@ -213,6 +218,33 @@ export function useNostrSession({
       initializingRef.current = false;
     };
   }, [initializeSession]);
+
+  // Retry initialization when app returns from background
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      const wasInBackground = lastAppStateRef.current !== "active";
+      lastAppStateRef.current = nextState;
+      setAppState(nextState);
+
+      // When returning to foreground, reset pool and retry initialization if stuck
+      if (nextState === "active" && wasInBackground) {
+        // Reset pool to clear stale WebSocket connections
+        resetPool();
+
+        // Retry initialization if we're in a state that could benefit from retry
+        // (loading that might have timed out, or needs_secret after network error)
+        if (sessionStatus === "loading" || sessionStatus === "needs_secret") {
+          // Reset the initializing flag to allow retry
+          initializingRef.current = false;
+          initializeSession();
+        }
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [initializeSession, sessionStatus]);
 
   // Submit npub (first step of login)
   const submitNpub = useCallback(

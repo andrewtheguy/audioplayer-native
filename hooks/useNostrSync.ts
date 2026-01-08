@@ -4,7 +4,6 @@ import type { NostrKeys } from "@/lib/nostr-crypto";
 import {
   loadHistoryFromNostr,
   mergeHistory,
-  resetPool,
   saveHistoryToNostr,
   subscribeToHistoryDetailed,
 } from "@/lib/nostr-sync";
@@ -288,13 +287,13 @@ export function useNostrSync({
   }, [encryptionKeys, sessionId, appState, sessionStatus]);
 
   // App state change effect - refresh data when app comes to foreground
+  // Note: resetPool is called by useNostrSession when app returns from background
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
       const wasInBackground = appState !== "active";
       setAppState(nextState);
-      // When returning to foreground, reset pool to clear stale connections and refresh data
+      // When returning to foreground, refresh data (pool is reset by useNostrSession)
       if (nextState === "active" && wasInBackground) {
-        resetPool();
         if (encryptionKeysRef.current && sessionStatusRef.current !== "invalid") {
           performLoad(false);
         }
