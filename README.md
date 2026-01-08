@@ -1,6 +1,6 @@
 # audioplayer-native
 
-An iOS-only audio player built with Expo. Stream audio URLs, keep a local listening history, and sync history across devices using a 16-character secret over Nostr relays.
+A native iOS companion app to [audioplayer](https://github.com/andrewtheguy/audioplayer). Stream audio URLs and sync playback history across devices via Nostr relays. Requires initial setup on the web app—sign in here with your npub and secondary secret to access your synced history.
 
 This native iOS app follows the architecture outlined in [audioplayer/docs/architecture.md](https://github.com/andrewtheguy/audioplayer/blob/main/docs/architecture.md). The web version of this audio player can be found in the [audioplayer repository](https://github.com/andrewtheguy/audioplayer).
 
