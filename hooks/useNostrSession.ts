@@ -219,22 +219,23 @@ export function useNostrSession({
     };
   }, [initializeSession]);
 
-  // Retry initialization when app returns from background
+  // Retry initialization when app returns from background/inactive (device unlock)
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
-      const wasInBackground = lastAppStateRef.current !== "active";
+      const wasNotActive = lastAppStateRef.current !== "active";
       lastAppStateRef.current = nextState;
       setAppState(nextState);
 
-      // When returning to foreground, reset pool and retry initialization if stuck
-      if (nextState === "active" && wasInBackground) {
-        // Reset pool to clear stale WebSocket connections
+      // When returning to foreground (from background or inactive/locked state),
+      // always reset pool to clear stale WebSocket connections
+      if (nextState === "active" && wasNotActive) {
+        console.log("[useNostrSession] App became active, resetting pool");
         resetPool();
 
         // Retry initialization if we're in a state that could benefit from retry
         // (loading that might have timed out, or needs_secret after network error)
         if (sessionStatus === "loading" || sessionStatus === "needs_secret") {
-          // Reset the initializing flag to allow retry
+          console.log("[useNostrSession] Retrying initialization, status:", sessionStatus);
           initializingRef.current = false;
           initializeSession();
         }

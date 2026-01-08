@@ -64,6 +64,7 @@ export function useNostrSync({
   const isLocalChangeRef = useRef(false);
   const pendingPublishRef = useRef(false);
   const latestTimestampRef = useRef(0);
+  const lastAppStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   useEffect(() => {
     historyRef.current = history;
@@ -287,13 +288,16 @@ export function useNostrSync({
   }, [encryptionKeys, sessionId, appState, sessionStatus]);
 
   // App state change effect - refresh data when app comes to foreground
-  // Note: resetPool is called by useNostrSession when app returns from background
+  // Note: resetPool is called by useNostrSession when app returns from background/inactive
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
-      const wasInBackground = appState !== "active";
+      const wasNotActive = lastAppStateRef.current !== "active";
+      lastAppStateRef.current = nextState;
       setAppState(nextState);
-      // When returning to foreground, refresh data (pool is reset by useNostrSession)
-      if (nextState === "active" && wasInBackground) {
+
+      // When returning to foreground (from background or inactive/locked), refresh data
+      if (nextState === "active" && wasNotActive) {
+        console.log("[useNostrSync] App became active, refreshing data");
         if (encryptionKeysRef.current && sessionStatusRef.current !== "invalid") {
           performLoad(false);
         }
@@ -303,7 +307,7 @@ export function useNostrSync({
     return () => {
       subscription.remove();
     };
-  }, [performLoad, appState]);
+  }, [performLoad]);
 
   // Auto-save effect
   useEffect(() => {
